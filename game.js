@@ -71,6 +71,10 @@ canvas.addEventListener('touchstart', (e) => {
   e.preventDefault();
   if (!gameOver) target = getEventPos(e);
 }, { passive: false });
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  if (!gameOver) target = getEventPos(e);
+}, { passive: false });
 document.getElementById('add-enemy').addEventListener('click', spawnEnemy);
 window.addEventListener('resize', resize);
 
