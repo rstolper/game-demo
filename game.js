@@ -2,6 +2,8 @@ const HEADER_HEIGHT = 44;
 const RADIUS = 18;
 const ATTACK_RANGE = RADIUS * 2.5;
 const SPEED = 300;
+const ENEMY_SPEED = 160;    // px/s — player can clearly outrun
+const DEAGGRO_RANGE = 400;  // px — enemy stops chasing beyond this
 
 const PLAYER_MAX_HP   = 100;
 const PLAYER_ATTACK   = 5;
@@ -51,7 +53,7 @@ function spawnEnemy() {
   let y = player.y + Math.sin(angle) * dist;
   x = Math.max(ATTACK_RANGE + 4, Math.min(canvas.width  - ATTACK_RANGE - 4, x));
   y = Math.max(ATTACK_RANGE + 4, Math.min(canvas.height - ATTACK_RANGE - 4, y));
-  enemies.push({ id: nextId++, x, y, hp: ENEMY_MAX_HP, maxHp: ENEMY_MAX_HP, attackCd: 0, regenTick: ENEMY_REGEN_INTERVAL, combatDelay: 0 });
+  enemies.push({ id: nextId++, x, y, spawnX: x, spawnY: y, state: 'idle', hp: ENEMY_MAX_HP, maxHp: ENEMY_MAX_HP, attackCd: 0, regenTick: ENEMY_REGEN_INTERVAL, combatDelay: 0 });
 }
 
 function getEventPos(e) {
@@ -86,6 +88,33 @@ function update(dt) {
     player.y += (dy / distToTarget) * step;
   }
 
+  // Move enemies
+  for (const enemy of enemies) {
+    if (enemy.state === 'chasing') {
+      const d = Math.hypot(player.x - enemy.x, player.y - enemy.y);
+      if (d > DEAGGRO_RANGE) {
+        enemy.state = 'returning';
+      } else if (d > 2) {
+        const step = Math.min(ENEMY_SPEED * dt, d);
+        enemy.x += (player.x - enemy.x) / d * step;
+        enemy.y += (player.y - enemy.y) / d * step;
+      }
+    } else if (enemy.state === 'returning') {
+      const rdx = enemy.spawnX - enemy.x;
+      const rdy = enemy.spawnY - enemy.y;
+      const d = Math.hypot(rdx, rdy);
+      if (d < 2) {
+        enemy.x = enemy.spawnX;
+        enemy.y = enemy.spawnY;
+        enemy.state = 'idle';
+      } else {
+        const step = Math.min(ENEMY_SPEED * dt, d);
+        enemy.x += rdx / d * step;
+        enemy.y += rdy / d * step;
+      }
+    }
+  }
+
   // Tick all attack cooldowns
   player.attackCd = Math.max(0, player.attackCd - dt);
   for (const e of enemies) e.attackCd = Math.max(0, e.attackCd - dt);
@@ -112,6 +141,7 @@ function update(dt) {
     for (const enemy of enemies) {
       if (Math.hypot(player.x - enemy.x, player.y - enemy.y) <= ATTACK_RANGE + RADIUS) {
         enemy.hp = Math.max(0, enemy.hp - PLAYER_ATTACK);
+        if (enemy.hp > 0) enemy.state = 'chasing';
       }
     }
   }
