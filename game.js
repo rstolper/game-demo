@@ -93,7 +93,7 @@ function update(dt) {
   let anyInRange = false;
 
   for (const enemy of enemies) {
-    if (Math.hypot(player.x - enemy.x, player.y - enemy.y) > ATTACK_RANGE) continue;
+    if (Math.hypot(player.x - enemy.x, player.y - enemy.y) > ATTACK_RANGE + RADIUS) continue;
     anyInRange = true;
 
     if (enemy.attackCd <= 0) {
@@ -107,7 +107,7 @@ function update(dt) {
   if (player.attackCd <= 0 && anyInRange) {
     player.attackCd = PLAYER_ATTACK_CD;
     for (const enemy of enemies) {
-      if (Math.hypot(player.x - enemy.x, player.y - enemy.y) <= ATTACK_RANGE) {
+      if (Math.hypot(player.x - enemy.x, player.y - enemy.y) <= ATTACK_RANGE + RADIUS) {
         enemy.hp = Math.max(0, enemy.hp - PLAYER_ATTACK);
       }
     }
