@@ -2,8 +2,9 @@ const HEADER_HEIGHT = 44;
 const RADIUS = 18;
 const ATTACK_RANGE = RADIUS * 2.5;
 const SPEED = 300;
-const ENEMY_SPEED = 120;    // px/s — player (300) can clearly outrun
-const DEAGGRO_RANGE = 300;  // px — enemy stops chasing beyond this
+const ENEMY_SPEED = 120;       // px/s — player (300) can clearly outrun
+const SPAWN_LEASH = 400;       // px from spawn — de-aggro only possible beyond this
+const PROXIMITY_DEAGGRO = 150; // px — won't de-aggro if player is closer than this
 
 const PLAYER_MAX_HP   = 100;
 const PLAYER_ATTACK   = 5;
@@ -14,7 +15,7 @@ const ENEMY_ATTACK    = 5;
 const ENEMY_ATTACK_CD  = 1.0; // seconds
 const ENEMY_REGEN_INTERVAL = 0.5; // seconds between enemy regen ticks
 
-const VERSION = '2026-05-12 17:30';
+const VERSION = '2026-05-12 18:00';
 
 const ENEMY_SPAWN_MIN_DIST = 200;
 const REGEN_COMBAT_DELAY   = 3.0;  // seconds out of combat before regen starts
@@ -37,8 +38,11 @@ function init() {
     y: canvas.height / 2,
     hp: PLAYER_MAX_HP,
     attackCd:    0,
-    combatDelay: 0,         // counts down to 0; regen allowed only when <= 0
+    combatDelay: 0,
     regenTick:   REGEN_INTERVAL,
+    level:  1,
+    xp:     0,
+    damage: PLAYER_ATTACK,
   };
   target  = { x: player.x, y: player.y };
   enemies = [];
@@ -98,7 +102,8 @@ function update(dt) {
   for (const enemy of enemies) {
     if (enemy.state === 'chasing') {
       const d = Math.hypot(player.x - enemy.x, player.y - enemy.y);
-      if (d > DEAGGRO_RANGE) {
+      const fromSpawn = Math.hypot(enemy.x - enemy.spawnX, enemy.y - enemy.spawnY);
+      if (fromSpawn > SPAWN_LEASH && d > PROXIMITY_DEAGGRO) {
         enemy.state = 'returning';
       } else if (d > ATTACK_RANGE + RADIUS) {
         const step = Math.min(ENEMY_SPEED * dt, d - (ATTACK_RANGE + RADIUS));
@@ -146,8 +151,13 @@ function update(dt) {
     player.attackCd = PLAYER_ATTACK_CD;
     for (const enemy of enemies) {
       if (Math.hypot(player.x - enemy.x, player.y - enemy.y) <= ATTACK_RANGE + RADIUS) {
-        enemy.hp = Math.max(0, enemy.hp - PLAYER_ATTACK);
-        if (enemy.hp > 0) enemy.state = 'chasing';
+        enemy.hp = Math.max(0, enemy.hp - player.damage);
+        if (enemy.hp === 0) {
+          player.xp += 20;
+          while (player.xp >= 100) { player.xp -= 100; player.level++; player.damage++; }
+        } else {
+          enemy.state = 'chasing';
+        }
       }
     }
   }
@@ -222,6 +232,15 @@ function draw() {
   // HP labels
   for (const e of enemies) hpText(e.x, e.y, e.hp, e.maxHp);
   hpText(player.x, player.y, player.hp, PLAYER_MAX_HP);
+
+  // Stats HUD (top-left, below header)
+  ctx.font = '13px monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.fillText(`Level ${player.level}   Damage ${player.damage}`, 10, 12);
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.fillText(`XP  ${player.xp} / 100`, 10, 30);
 
   // Version label
   ctx.font = '11px monospace';
