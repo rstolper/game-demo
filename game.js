@@ -14,7 +14,7 @@ const ENEMY_ATTACK    = 5;
 const ENEMY_ATTACK_CD  = 1.0; // seconds
 const ENEMY_REGEN_INTERVAL = 0.5; // seconds between enemy regen ticks
 
-const VERSION = '2026-05-12 17:05';
+const VERSION = '2026-05-12 17:30';
 
 const ENEMY_SPAWN_MIN_DIST = 200;
 const REGEN_COMBAT_DELAY   = 3.0;  // seconds out of combat before regen starts
