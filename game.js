@@ -51,7 +51,7 @@ function spawnEnemy() {
   let y = player.y + Math.sin(angle) * dist;
   x = Math.max(ATTACK_RANGE + 4, Math.min(canvas.width  - ATTACK_RANGE - 4, x));
   y = Math.max(ATTACK_RANGE + 4, Math.min(canvas.height - ATTACK_RANGE - 4, y));
-  enemies.push({ id: nextId++, x, y, hp: ENEMY_MAX_HP, maxHp: ENEMY_MAX_HP, attackCd: 0, regenTick: ENEMY_REGEN_INTERVAL });
+  enemies.push({ id: nextId++, x, y, hp: ENEMY_MAX_HP, maxHp: ENEMY_MAX_HP, attackCd: 0, regenTick: ENEMY_REGEN_INTERVAL, combatDelay: 0 });
 }
 
 function getEventPos(e) {
@@ -92,10 +92,12 @@ function update(dt) {
 
   // Combat: check each enemy's range against player
   let anyInRange = false;
+  for (const e of enemies) e.inCombat = false;
 
   for (const enemy of enemies) {
     if (Math.hypot(player.x - enemy.x, player.y - enemy.y) > ATTACK_RANGE + RADIUS) continue;
     anyInRange = true;
+    enemy.inCombat = true;
 
     if (enemy.attackCd <= 0) {
       enemy.attackCd = ENEMY_ATTACK_CD;
@@ -116,13 +118,19 @@ function update(dt) {
 
   enemies = enemies.filter(e => e.hp > 0);
 
-  // Enemy HP regen (unconditional)
+  // Enemy HP regen: same rules as player (out of combat, 3s delay)
   for (const enemy of enemies) {
-    if (enemy.hp < enemy.maxHp) {
-      enemy.regenTick -= dt;
-      if (enemy.regenTick <= 0) {
-        enemy.regenTick = ENEMY_REGEN_INTERVAL;
-        enemy.hp = Math.min(enemy.maxHp, enemy.hp + 1);
+    if (enemy.inCombat) {
+      enemy.combatDelay = REGEN_COMBAT_DELAY;
+      enemy.regenTick   = ENEMY_REGEN_INTERVAL;
+    } else {
+      enemy.combatDelay = Math.max(0, enemy.combatDelay - dt);
+      if (enemy.combatDelay <= 0 && enemy.hp < enemy.maxHp) {
+        enemy.regenTick -= dt;
+        if (enemy.regenTick <= 0) {
+          enemy.regenTick = ENEMY_REGEN_INTERVAL;
+          enemy.hp = Math.min(enemy.maxHp, enemy.hp + 1);
+        }
       }
     }
   }
