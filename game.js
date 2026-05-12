@@ -2,8 +2,8 @@ const HEADER_HEIGHT = 44;
 const RADIUS = 18;
 const ATTACK_RANGE = RADIUS * 2.5;
 const SPEED = 300;
-const ENEMY_SPEED = 160;    // px/s — player can clearly outrun
-const DEAGGRO_RANGE = 400;  // px — enemy stops chasing beyond this
+const ENEMY_SPEED = 120;    // px/s — player (300) can clearly outrun
+const DEAGGRO_RANGE = 500;  // px — enemy stops chasing beyond this
 
 const PLAYER_MAX_HP   = 100;
 const PLAYER_ATTACK   = 5;
@@ -13,6 +13,8 @@ const ENEMY_MAX_HP    = 20;
 const ENEMY_ATTACK    = 3;
 const ENEMY_ATTACK_CD  = 1.5; // seconds
 const ENEMY_REGEN_INTERVAL = 0.5; // seconds between enemy regen ticks
+
+const VERSION = '2026-05-12';
 
 const ENEMY_SPAWN_MIN_DIST = 200;
 const REGEN_COMBAT_DELAY   = 3.0;  // seconds out of combat before regen starts
@@ -94,8 +96,8 @@ function update(dt) {
       const d = Math.hypot(player.x - enemy.x, player.y - enemy.y);
       if (d > DEAGGRO_RANGE) {
         enemy.state = 'returning';
-      } else if (d > 2) {
-        const step = Math.min(ENEMY_SPEED * dt, d);
+      } else if (d > ATTACK_RANGE + RADIUS) {
+        const step = Math.min(ENEMY_SPEED * dt, d - (ATTACK_RANGE + RADIUS));
         enemy.x += (player.x - enemy.x) / d * step;
         enemy.y += (player.y - enemy.y) / d * step;
       }
@@ -150,7 +152,7 @@ function update(dt) {
 
   // Enemy HP regen: same rules as player (out of combat, 3s delay)
   for (const enemy of enemies) {
-    if (enemy.inCombat) {
+    if (enemy.inCombat || enemy.state !== 'idle') {
       enemy.combatDelay = REGEN_COMBAT_DELAY;
       enemy.regenTick   = ENEMY_REGEN_INTERVAL;
     } else {
@@ -216,6 +218,13 @@ function draw() {
   // HP labels
   for (const e of enemies) hpText(e.x, e.y, e.hp, e.maxHp);
   hpText(player.x, player.y, player.hp, PLAYER_MAX_HP);
+
+  // Version label
+  ctx.font = '11px monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'bottom';
+  ctx.fillStyle = 'rgba(255,255,255,0.25)';
+  ctx.fillText(VERSION, 8, canvas.height - 8);
 
   if (gameOver) {
     ctx.fillStyle = 'rgba(0,0,0,0.72)';
