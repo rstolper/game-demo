@@ -3,18 +3,18 @@ const RADIUS = 18;
 const ATTACK_RANGE = RADIUS * 2.5;
 const SPEED = 300;
 const ENEMY_SPEED = 120;    // px/s — player (300) can clearly outrun
-const DEAGGRO_RANGE = 500;  // px — enemy stops chasing beyond this
+const DEAGGRO_RANGE = 300;  // px — enemy stops chasing beyond this
 
 const PLAYER_MAX_HP   = 100;
 const PLAYER_ATTACK   = 5;
 const PLAYER_ATTACK_CD = 1.0; // seconds
 
 const ENEMY_MAX_HP    = 20;
-const ENEMY_ATTACK    = 3;
-const ENEMY_ATTACK_CD  = 1.5; // seconds
+const ENEMY_ATTACK    = 5;
+const ENEMY_ATTACK_CD  = 1.0; // seconds
 const ENEMY_REGEN_INTERVAL = 0.5; // seconds between enemy regen ticks
 
-const VERSION = '2026-05-12';
+const VERSION = '2026-05-12 17:05';
 
 const ENEMY_SPAWN_MIN_DIST = 200;
 const REGEN_COMBAT_DELAY   = 3.0;  // seconds out of combat before regen starts
