@@ -3,19 +3,24 @@ const RADIUS = 18;
 const ATTACK_RANGE = RADIUS * 2.5;
 const SPEED = 300;
 const ENEMY_SPEED = 120;       // px/s — player (300) can clearly outrun
-const SPAWN_LEASH = 400;       // px from spawn — de-aggro only possible beyond this
-const PROXIMITY_DEAGGRO = 150; // px — won't de-aggro if player is closer than this
+const SPAWN_LEASH   = 400;     // px from spawn — de-aggro threshold tightens beyond this
+const NEAR_DEAGGRO  = 150;     // de-aggro distance when enemy is near its spawn
+const FAR_DEAGGRO   = 50;      // de-aggro distance when enemy has wandered far from spawn
 
 const PLAYER_MAX_HP   = 100;
 const PLAYER_ATTACK   = 5;
 const PLAYER_ATTACK_CD = 1.0; // seconds
+
+const POTION_HEAL = 50;
+const POTION_CD   = 20; // seconds
+const POTION_SIZE = 52; // px — tile dimensions
 
 const ENEMY_MAX_HP    = 20;
 const ENEMY_ATTACK    = 5;
 const ENEMY_ATTACK_CD  = 1.0; // seconds
 const ENEMY_REGEN_INTERVAL = 0.5; // seconds between enemy regen ticks
 
-const VERSION = '2026-05-12 18:00';
+const VERSION = '2026-05-12 18:30';
 
 const ENEMY_SPAWN_MIN_DIST = 200;
 const REGEN_COMBAT_DELAY   = 3.0;  // seconds out of combat before regen starts
@@ -40,9 +45,10 @@ function init() {
     attackCd:    0,
     combatDelay: 0,
     regenTick:   REGEN_INTERVAL,
-    level:  1,
-    xp:     0,
-    damage: PLAYER_ATTACK,
+    level:    1,
+    xp:       0,
+    damage:   PLAYER_ATTACK,
+    potionCd: 0,
   };
   target  = { x: player.x, y: player.y };
   enemies = [];
@@ -70,10 +76,29 @@ function getEventPos(e) {
   return { x: e.clientX - rect.left, y: e.clientY - rect.top };
 }
 
-canvas.addEventListener('click', (e) => { if (!gameOver) target = getEventPos(e); });
+function potionRect() {
+  return { x: Math.floor(canvas.width / 2 - POTION_SIZE / 2), y: canvas.height - POTION_SIZE - 12, w: POTION_SIZE, h: POTION_SIZE };
+}
+
+function usePotion() {
+  if (player.potionCd > 0) return;
+  player.hp = Math.min(PLAYER_MAX_HP, player.hp + POTION_HEAL);
+  player.potionCd = POTION_CD;
+}
+
+function handleTap(pos) {
+  const r = potionRect();
+  if (pos.x >= r.x && pos.x <= r.x + r.w && pos.y >= r.y && pos.y <= r.y + r.h) {
+    usePotion();
+  } else {
+    target = pos;
+  }
+}
+
+canvas.addEventListener('click', (e) => { if (!gameOver) handleTap(getEventPos(e)); });
 canvas.addEventListener('touchstart', (e) => {
   e.preventDefault();
-  if (!gameOver) target = getEventPos(e);
+  if (!gameOver) handleTap(getEventPos(e));
 }, { passive: false });
 canvas.addEventListener('touchmove', (e) => {
   e.preventDefault();
@@ -103,7 +128,8 @@ function update(dt) {
     if (enemy.state === 'chasing') {
       const d = Math.hypot(player.x - enemy.x, player.y - enemy.y);
       const fromSpawn = Math.hypot(enemy.x - enemy.spawnX, enemy.y - enemy.spawnY);
-      if (fromSpawn > SPAWN_LEASH && d > PROXIMITY_DEAGGRO) {
+      const deaggroAt = fromSpawn > SPAWN_LEASH ? FAR_DEAGGRO : NEAR_DEAGGRO;
+      if (d > deaggroAt) {
         enemy.state = 'returning';
       } else if (d > ATTACK_RANGE + RADIUS) {
         const step = Math.min(ENEMY_SPEED * dt, d - (ATTACK_RANGE + RADIUS));
@@ -126,8 +152,9 @@ function update(dt) {
     }
   }
 
-  // Tick all attack cooldowns
+  // Tick cooldowns
   player.attackCd = Math.max(0, player.attackCd - dt);
+  player.potionCd = Math.max(0, player.potionCd - dt);
   for (const e of enemies) e.attackCd = Math.max(0, e.attackCd - dt);
 
   // Combat: check each enemy's range against player
@@ -213,6 +240,42 @@ function hpText(x, y, hp, maxHp) {
   ctx.fillText(`${hp}/${maxHp}`, x, y - RADIUS - 4);
 }
 
+function drawPotion() {
+  const { x, y, w, h } = potionRect();
+  const cx = x + w / 2;
+  const ready = player.potionCd <= 0;
+
+  // Tile
+  ctx.fillStyle = ready ? 'rgba(60,10,80,0.88)' : 'rgba(28,28,28,0.82)';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = ready ? '#b05cff' : '#444';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x, y, w, h);
+
+  const bodyY = y + h * 0.64;
+  const neckX = cx - 3.5, neckY = bodyY - 13;
+
+  // Flask body
+  circle(cx, bodyY, 11, ready ? '#cc44ff' : '#555', null);
+  // Flask neck
+  ctx.fillStyle = ready ? '#8822bb' : '#3a3a3a';
+  ctx.fillRect(neckX, neckY, 7, 11);
+  // Cork
+  ctx.fillStyle = ready ? '#bb8844' : '#444';
+  ctx.fillRect(neckX + 0.5, neckY - 5, 6, 6);
+  // Shine
+  if (ready) circle(cx - 4, bodyY - 4, 3, 'rgba(255,255,255,0.32)', null);
+
+  // Cooldown countdown
+  if (!ready) {
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = '#888';
+    ctx.fillText(Math.ceil(player.potionCd) + 's', cx, y + h - 3);
+  }
+}
+
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -241,6 +304,9 @@ function draw() {
   ctx.fillText(`Level ${player.level}   Damage ${player.damage}`, 10, 12);
   ctx.fillStyle = 'rgba(255,255,255,0.55)';
   ctx.fillText(`XP  ${player.xp} / 100`, 10, 30);
+
+  // Potion tile
+  drawPotion();
 
   // Version label
   ctx.font = '11px monospace';
