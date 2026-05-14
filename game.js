@@ -3,9 +3,7 @@ const RADIUS = 18;
 const ATTACK_RANGE = RADIUS * 2.5;
 const SPEED = 300;
 const ENEMY_SPEED = 120;
-const SPAWN_LEASH  = 400;
-const NEAR_DEAGGRO = 150;
-const FAR_DEAGGRO  = 50;
+const SPAWN_LEASH = 700;  // how far player can be from enemy spawn before enemy gives up
 
 const MAP_W = 3000;
 const MAP_H = 3000;
@@ -23,7 +21,7 @@ const ENEMY_ATTACK         = 5;
 const ENEMY_ATTACK_CD      = 1.0;
 const ENEMY_REGEN_INTERVAL = 0.5;
 
-const VERSION = '2026-05-14 10:30';
+const VERSION = '2026-05-14 11:00';
 
 const ENEMY_SPAWN_MIN_DIST = 200;
 const REGEN_COMBAT_DELAY   = 3.0;
@@ -36,13 +34,13 @@ const TREE_MIN_DIST = 200;
 const MINIMAP_SIZE   = 130;
 const MINIMAP_MARGIN = 10;
 
-const BOW_RANGE      = 900;
-const BOW_CD         = 2.0;
-const ARROW_SPEED    = 500;
-const BOW_TAP_RADIUS = RADIUS * 3;
+const BOW_RANGE   = 900;
+const BOW_CD      = 2.0;
+const ARROW_SPEED = 500;
 
 const WEAPON_SIZE   = 52;
 const WEAPON_MARGIN = 12;
+const ATTACK_BTN_H  = 28;
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -64,11 +62,13 @@ function init() {
     level: 1, xp: 0, damage: PLAYER_ATTACK,
     potionCd: 0,
     weapon: 'sword', bowCd: 0,
+    selectedEnemyId: null,
+    attackTarget: null,   // id of enemy player is actively chasing to melee
   };
-  target  = { x: player.x, y: player.y };
-  enemies = [];
-  arrows  = [];
-  nextId  = 0;
+  target   = { x: player.x, y: player.y };
+  enemies  = [];
+  arrows   = [];
+  nextId   = 0;
   gameOver = false;
   lastTime = null;
   initTrees();
@@ -100,6 +100,7 @@ function initEnemies() {
 
 function makeEnemy(x, y) {
   return { id: nextId++, x, y, spawnX: x, spawnY: y, state: 'idle',
+           name: 'Wild Boar',
            hp: ENEMY_MAX_HP, maxHp: ENEMY_MAX_HP,
            attackCd: 0, regenTick: ENEMY_REGEN_INTERVAL, combatDelay: 0 };
 }
@@ -122,7 +123,6 @@ function resolveCircleRect(cx, cy, rx, ry, rw, rh) {
   const dist = Math.hypot(dx, dy);
   if (dist >= RADIUS) return null;
   if (dist === 0) {
-    // Center inside rect — push to nearest edge
     const dLeft  = cx - rx;
     const dRight = rx + rw - cx;
     const dTop   = cy - ry;
@@ -157,6 +157,10 @@ function screenToWorld(sx, sy) {
   return { x: sx + player.x - canvas.width / 2, y: sy + player.y - canvas.height / 2 };
 }
 
+function inRect(pos, r) {
+  return pos.x >= r.x && pos.x <= r.x + r.w && pos.y >= r.y && pos.y <= r.y + r.h;
+}
+
 function potionRect() {
   return { x: Math.floor(canvas.width / 2 - POTION_SIZE / 2), y: canvas.height - POTION_SIZE - 12, w: POTION_SIZE, h: POTION_SIZE };
 }
@@ -165,9 +169,14 @@ function weaponRects() {
   const rx = canvas.width - WEAPON_SIZE - WEAPON_MARGIN;
   const midY = Math.floor(canvas.height / 2);
   return {
-    sword: { x: rx, y: midY - WEAPON_SIZE - 4 },
-    bow:   { x: rx, y: midY + 4 },
+    sword: { x: rx, y: midY - WEAPON_SIZE - 4, w: WEAPON_SIZE, h: WEAPON_SIZE },
+    bow:   { x: rx, y: midY + 4,               w: WEAPON_SIZE, h: WEAPON_SIZE },
   };
+}
+
+function attackBtnRect() {
+  const wr = weaponRects();
+  return { x: wr.bow.x, y: wr.bow.y + WEAPON_SIZE + 8, w: WEAPON_SIZE, h: ATTACK_BTN_H };
 }
 
 function minimapRect() {
@@ -184,7 +193,7 @@ function shootArrow(enemy) {
   const dx = enemy.x - player.x;
   const dy = enemy.y - player.y;
   const dist = Math.hypot(dx, dy);
-  if (dist > BOW_RANGE) return;
+  if (dist > BOW_RANGE || player.bowCd > 0) return;
   player.bowCd = BOW_CD;
   enemy.state = 'chasing';
   arrows.push({
@@ -195,40 +204,45 @@ function shootArrow(enemy) {
   });
 }
 
+function executeAttack() {
+  const enemy = enemies.find(e => e.id === player.selectedEnemyId);
+  if (!enemy) return;
+  if (player.weapon === 'bow') {
+    shootArrow(enemy);
+  } else {
+    player.attackTarget = enemy.id;
+  }
+}
+
 function handleTap(screenPos) {
-  // Minimap area — ignore
+  // Minimap — ignore
   const mm = minimapRect();
   if (screenPos.x >= mm.x && screenPos.y <= MINIMAP_SIZE + MINIMAP_MARGIN * 2) return;
 
   // Potion
-  const r = potionRect();
-  if (screenPos.x >= r.x && screenPos.x <= r.x + r.w && screenPos.y >= r.y && screenPos.y <= r.y + r.h) {
-    usePotion(); return;
-  }
+  if (inRect(screenPos, potionRect())) { usePotion(); return; }
 
   // Weapon tiles
   const wr = weaponRects();
-  if (screenPos.x >= wr.sword.x && screenPos.x <= wr.sword.x + WEAPON_SIZE &&
-      screenPos.y >= wr.sword.y && screenPos.y <= wr.sword.y + WEAPON_SIZE) {
-    player.weapon = 'sword'; return;
-  }
-  if (screenPos.x >= wr.bow.x && screenPos.x <= wr.bow.x + WEAPON_SIZE &&
-      screenPos.y >= wr.bow.y && screenPos.y <= wr.bow.y + WEAPON_SIZE) {
-    player.weapon = 'bow'; return;
-  }
+  if (inRect(screenPos, wr.sword)) { player.weapon = 'sword'; return; }
+  if (inRect(screenPos, wr.bow))   { player.weapon = 'bow';   return; }
 
-  // Bow: tap near enemy to shoot; tap empty space to move
-  if (player.weapon === 'bow') {
-    const worldPos = screenToWorld(screenPos.x, screenPos.y);
-    for (const enemy of enemies) {
-      if (Math.hypot(worldPos.x - enemy.x, worldPos.y - enemy.y) <= BOW_TAP_RADIUS) {
-        if (player.bowCd <= 0) shootArrow(enemy);
-        return; // don't move player when tapping near an enemy
-      }
+  // Attack button
+  if (inRect(screenPos, attackBtnRect())) { executeAttack(); return; }
+
+  // Enemy selection
+  const worldPos = screenToWorld(screenPos.x, screenPos.y);
+  for (const enemy of enemies) {
+    if (Math.hypot(worldPos.x - enemy.x, worldPos.y - enemy.y) <= RADIUS * 1.5) {
+      player.selectedEnemyId = enemy.id;
+      player.attackTarget = null;
+      return;
     }
   }
 
-  target = screenToWorld(screenPos.x, screenPos.y);
+  // Tap on empty space — deselect
+  player.selectedEnemyId = null;
+  player.attackTarget = null;
 }
 
 // Mouse: drag to move, click (no drag) to tap
@@ -274,6 +288,24 @@ init();
 function update(dt) {
   if (gameOver) return;
 
+  // Steer toward melee attack target
+  if (player.attackTarget !== null) {
+    const tgt = enemies.find(e => e.id === player.attackTarget);
+    if (!tgt) {
+      player.attackTarget = null;
+    } else {
+      const tdx = player.x - tgt.x;
+      const tdy = player.y - tgt.y;
+      const td = Math.hypot(tdx, tdy);
+      const stopAt = ATTACK_RANGE + RADIUS * 0.5;
+      if (td > stopAt) {
+        target = { x: tgt.x + (tdx / td) * stopAt, y: tgt.y + (tdy / td) * stopAt };
+      } else {
+        target = { x: player.x, y: player.y }; // in range — stop moving
+      }
+    }
+  }
+
   // Move player
   const dx = target.x - player.x;
   const dy = target.y - player.y;
@@ -290,13 +322,12 @@ function update(dt) {
   player.x = Math.max(RADIUS, Math.min(MAP_W - RADIUS, player.x));
   player.y = Math.max(RADIUS, Math.min(MAP_H - RADIUS, player.y));
 
-  // Move enemies
+  // Move enemies — de-aggro when player strays too far from enemy's home
   for (const enemy of enemies) {
     if (enemy.state === 'chasing') {
       const d = Math.hypot(player.x - enemy.x, player.y - enemy.y);
-      const fromSpawn = Math.hypot(enemy.x - enemy.spawnX, enemy.y - enemy.spawnY);
-      const deaggroAt = fromSpawn > SPAWN_LEASH ? FAR_DEAGGRO : NEAR_DEAGGRO;
-      if (d > deaggroAt) {
+      const playerFromSpawn = Math.hypot(player.x - enemy.spawnX, player.y - enemy.spawnY);
+      if (playerFromSpawn > SPAWN_LEASH) {
         enemy.state = 'returning';
       } else if (d > ATTACK_RANGE + RADIUS) {
         const step = Math.min(ENEMY_SPEED * dt, d - (ATTACK_RANGE + RADIUS));
@@ -346,7 +377,7 @@ function update(dt) {
   });
   enemies = enemies.filter(e => e.hp > 0);
 
-  // Combat (enemies always attack in melee; player attacks with sword)
+  // Combat (enemies always attack in melee; player auto-attacks with sword when in range)
   let anyInRange = false;
   for (const e of enemies) e.inCombat = false;
 
@@ -377,6 +408,14 @@ function update(dt) {
   }
 
   enemies = enemies.filter(e => e.hp > 0);
+
+  // Clean up stale selection / attack target
+  if (player.selectedEnemyId !== null && !enemies.some(e => e.id === player.selectedEnemyId)) {
+    player.selectedEnemyId = null;
+  }
+  if (player.attackTarget !== null && !enemies.some(e => e.id === player.attackTarget)) {
+    player.attackTarget = null;
+  }
 
   // Enemy regen
   for (const enemy of enemies) {
@@ -435,7 +474,6 @@ function drawTree(t) {
   ctx.strokeStyle = '#0d3a0d';
   ctx.lineWidth = 1;
   ctx.strokeRect(x, y, TREE_SIZE, TREE_SIZE);
-  // Trunk
   const tw = 10, th = 14;
   ctx.fillStyle = '#4a2d0a';
   ctx.fillRect(x + (TREE_SIZE - tw) / 2, y + TREE_SIZE - th, tw, th);
@@ -484,16 +522,13 @@ function drawBowIcon(cx, cy, color) {
   ctx.strokeStyle = color;
   ctx.lineCap = 'round';
   ctx.lineWidth = 2;
-  // Arc of bow
   ctx.beginPath();
   ctx.arc(cx + 5, cy, 13, Math.PI * 0.58, Math.PI * 1.42, false);
   ctx.stroke();
-  // String
   const sx = cx + 5 + 13 * Math.cos(Math.PI * 0.58);
   const sy1 = cy + 13 * Math.sin(Math.PI * 0.58);
   const sy2 = cy + 13 * Math.sin(Math.PI * 1.42);
   ctx.beginPath(); ctx.moveTo(sx, sy1); ctx.lineTo(sx, sy2); ctx.stroke();
-  // Arrow shaft + head
   ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.moveTo(cx - 11, cy); ctx.lineTo(cx + 7, cy); ctx.stroke();
   ctx.beginPath();
@@ -526,10 +561,61 @@ function drawWeaponTile(x, y, type, cd, maxCd, selected) {
   }
 }
 
+function drawAttackButton() {
+  const r = attackBtnRect();
+  const hasSel = player.selectedEnemyId !== null && enemies.some(e => e.id === player.selectedEnemyId);
+  const onCd   = hasSel && player.weapon === 'bow' && player.bowCd > 0;
+  const active = hasSel && !onCd;
+
+  ctx.fillStyle = active ? 'rgba(180,40,40,0.90)' : 'rgba(28,28,28,0.82)';
+  ctx.fillRect(r.x, r.y, r.w, r.h);
+  ctx.strokeStyle = active ? '#f88' : '#444';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(r.x, r.y, r.w, r.h);
+
+  ctx.font = 'bold 11px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = active ? '#fff' : (hasSel ? '#a66' : '#444');
+  ctx.fillText('ATTACK', r.x + r.w / 2, r.y + r.h / 2);
+}
+
 function drawWeapons() {
   const wr = weaponRects();
   drawWeaponTile(wr.sword.x, wr.sword.y, 'sword', player.attackCd, PLAYER_ATTACK_CD, player.weapon === 'sword');
   drawWeaponTile(wr.bow.x,   wr.bow.y,   'bow',   player.bowCd,    BOW_CD,           player.weapon === 'bow');
+  drawAttackButton();
+}
+
+function drawSelectedInfo() {
+  const enemy = enemies.find(e => e.id === player.selectedEnemyId);
+  if (!enemy) return;
+
+  const barW = 180, barH = 14;
+  const cx = Math.floor(canvas.width / 2);
+  const y  = 8;
+
+  ctx.font = 'bold 13px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = '#eee';
+  ctx.fillText(enemy.name, cx, y);
+
+  const barX = cx - barW / 2;
+  const barY = y + 20;
+  ctx.fillStyle = '#222';
+  ctx.fillRect(barX, barY, barW, barH);
+  const hpFrac = enemy.hp / enemy.maxHp;
+  ctx.fillStyle = `hsl(${Math.round(hpFrac * 110)}, 65%, 42%)`;
+  ctx.fillRect(barX, barY, barW * hpFrac, barH);
+  ctx.strokeStyle = '#555';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(barX, barY, barW, barH);
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ddd';
+  ctx.fillText(`${enemy.hp} / ${enemy.maxHp}`, cx, barY + barH / 2);
 }
 
 function drawMinimap() {
@@ -542,20 +628,17 @@ function drawMinimap() {
   ctx.lineWidth = 1;
   ctx.strokeRect(mm.x, mm.y, MINIMAP_SIZE, MINIMAP_SIZE);
 
-  // Trees
   ctx.fillStyle = '#1a4a1a';
   for (const t of trees) {
     const ts = TREE_SIZE * scale;
     ctx.fillRect(mm.x + t.x * scale - ts / 2, mm.y + t.y * scale - ts / 2, ts, ts);
   }
 
-  // Enemies
   ctx.fillStyle = '#e44';
   for (const e of enemies) {
     ctx.fillRect(mm.x + e.x * scale - 2, mm.y + e.y * scale - 2, 4, 4);
   }
 
-  // Player
   ctx.fillStyle = '#4af';
   ctx.fillRect(mm.x + player.x * scale - 2.5, mm.y + player.y * scale - 2.5, 5, 5);
 }
@@ -577,12 +660,22 @@ function draw() {
   // Trees
   for (const t of trees) drawTree(t);
 
-  // Target indicator
+  // Target indicator (shown while dragging)
   circle(target.x, target.y, 5, 'rgba(255,255,255,0.11)', null);
 
   // Attack range rings
   for (const e of enemies) circle(e.x, e.y, ATTACK_RANGE, 'rgba(255,80,80,0.10)', 'rgba(255,100,100,0.35)', 1);
   circle(player.x, player.y, ATTACK_RANGE, 'rgba(68,170,255,0.10)', 'rgba(68,170,255,0.35)', 1);
+
+  // Selection ring
+  const selEnemy = enemies.find(e => e.id === player.selectedEnemyId);
+  if (selEnemy) {
+    ctx.beginPath();
+    ctx.arc(selEnemy.x, selEnemy.y, RADIUS + 6, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
 
   // Arrows
   ctx.strokeStyle = '#ffcc44';
@@ -616,6 +709,7 @@ function draw() {
   ctx.fillStyle = 'rgba(255,255,255,0.55)';
   ctx.fillText(`XP  ${player.xp} / 100`, 10, 30);
 
+  drawSelectedInfo();
   drawMinimap();
   drawWeapons();
   drawPotion();
