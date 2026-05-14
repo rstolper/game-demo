@@ -21,7 +21,7 @@ const ENEMY_ATTACK         = 5;
 const ENEMY_ATTACK_CD      = 1.0;
 const ENEMY_REGEN_INTERVAL = 0.5;
 
-const VERSION = '2026-05-14 11:00';
+const VERSION = '2026-05-14 12:00';
 
 const ENEMY_SPAWN_MIN_DIST = 200;
 const REGEN_COMBAT_DELAY   = 3.0;
@@ -41,11 +41,15 @@ const ARROW_SPEED = 500;
 const WEAPON_SIZE   = 52;
 const WEAPON_MARGIN = 12;
 const ATTACK_BTN_H  = 28;
+const TALK_BTN_H    = 28;
+
+const TALK_RADIUS   = 150;
+const TALK_DURATION = 10.0;
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
-let player, target, enemies, arrows, trees, nextId, gameOver, lastTime;
+let player, target, enemies, arrows, trees, npcs, nextId, gameOver, lastTime;
 let touchStartPos = null, touchDragged = false;
 
 function resize() {
@@ -63,16 +67,19 @@ function init() {
     potionCd: 0,
     weapon: 'sword', bowCd: 0,
     selectedEnemyId: null,
+    selectedNpcId: null,
     attackTarget: null,   // id of enemy player is actively chasing to melee
   };
   target   = { x: player.x, y: player.y };
   enemies  = [];
   arrows   = [];
+  npcs     = [];
   nextId   = 0;
   gameOver = false;
   lastTime = null;
   initTrees();
   initEnemies();
+  initNpcs();
 }
 
 function initTrees() {
@@ -103,6 +110,15 @@ function makeEnemy(x, y) {
            name: 'Wild Boar',
            hp: ENEMY_MAX_HP, maxHp: ENEMY_MAX_HP,
            attackCd: 0, regenTick: ENEMY_REGEN_INTERVAL, combatDelay: 0 };
+}
+
+function makeNpc(x, y, name, dialogue) {
+  return { id: nextId++, x, y, name, dialogue, talkTimer: 0 };
+}
+
+function initNpcs() {
+  // Jimmy stands a short walk east of the player's starting position
+  npcs.push(makeNpc(MAP_W / 2 + 350, MAP_H / 2, 'Jimmy', 'Hello!'));
 }
 
 function spawnEnemy() {
@@ -179,6 +195,15 @@ function attackBtnRect() {
   return { x: wr.bow.x, y: wr.bow.y + WEAPON_SIZE + 8, w: WEAPON_SIZE, h: ATTACK_BTN_H };
 }
 
+function talkBtnRect() {
+  const ab = attackBtnRect();
+  return { x: ab.x, y: ab.y + ATTACK_BTN_H + 6, w: WEAPON_SIZE, h: TALK_BTN_H };
+}
+
+function isNearNpc() {
+  return npcs.some(n => Math.hypot(player.x - n.x, player.y - n.y) <= TALK_RADIUS);
+}
+
 function minimapRect() {
   return { x: canvas.width - MINIMAP_SIZE - MINIMAP_MARGIN, y: MINIMAP_MARGIN };
 }
@@ -214,6 +239,14 @@ function executeAttack() {
   }
 }
 
+function executeTalk() {
+  const npc = npcs.find(n => n.id === player.selectedNpcId);
+  if (!npc) return;
+  if (Math.hypot(player.x - npc.x, player.y - npc.y) > TALK_RADIUS) return;
+  if (npc.talkTimer > 0) return;
+  npc.talkTimer = TALK_DURATION;
+}
+
 function handleTap(screenPos) {
   // Minimap — ignore
   const mm = minimapRect();
@@ -230,19 +263,36 @@ function handleTap(screenPos) {
   // Attack button
   if (inRect(screenPos, attackBtnRect())) { executeAttack(); return; }
 
-  // Enemy selection
+  // Talk button (only visible when near an NPC)
+  if (isNearNpc() && inRect(screenPos, talkBtnRect())) { executeTalk(); return; }
+
+  // World-space entity selection
   const worldPos = screenToWorld(screenPos.x, screenPos.y);
+
+  // Enemy selection
   for (const enemy of enemies) {
     if (Math.hypot(worldPos.x - enemy.x, worldPos.y - enemy.y) <= RADIUS * 1.5) {
       player.selectedEnemyId = enemy.id;
-      player.attackTarget = null;
+      player.selectedNpcId   = null;
+      player.attackTarget    = null;
       return;
     }
   }
 
-  // Tap on empty space — deselect
+  // NPC selection
+  for (const npc of npcs) {
+    if (Math.hypot(worldPos.x - npc.x, worldPos.y - npc.y) <= RADIUS * 1.5) {
+      player.selectedNpcId   = npc.id;
+      player.selectedEnemyId = null;
+      player.attackTarget    = null;
+      return;
+    }
+  }
+
+  // Tap empty space — deselect everything
   player.selectedEnemyId = null;
-  player.attackTarget = null;
+  player.selectedNpcId   = null;
+  player.attackTarget    = null;
 }
 
 // Mouse: drag to move, click (no drag) to tap
@@ -434,6 +484,11 @@ function update(dt) {
     }
   }
 
+  // NPC talk timers
+  for (const npc of npcs) {
+    if (npc.talkTimer > 0) npc.talkTimer = Math.max(0, npc.talkTimer - dt);
+  }
+
   // Player regen
   if (anyInRange) {
     player.combatDelay = REGEN_COMBAT_DELAY;
@@ -580,42 +635,111 @@ function drawAttackButton() {
   ctx.fillText('ATTACK', r.x + r.w / 2, r.y + r.h / 2);
 }
 
+function drawNpcDialogue(npc) {
+  if (npc.talkTimer <= 0) return;
+  ctx.font = '12px monospace';
+  const tw  = ctx.measureText(npc.dialogue).width;
+  const pad = 8, bw = tw + pad * 2, bh = 22;
+  const bx  = npc.x - bw / 2;
+  const by  = npc.y - RADIUS - bh - 16;
+
+  ctx.fillStyle = 'rgba(240,238,215,0.93)';
+  ctx.fillRect(bx, by, bw, bh);
+  ctx.strokeStyle = '#999';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(bx, by, bw, bh);
+
+  // Tail pointing down to NPC
+  ctx.beginPath();
+  ctx.moveTo(npc.x - 5, by + bh);
+  ctx.lineTo(npc.x + 5, by + bh);
+  ctx.lineTo(npc.x, by + bh + 8);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(240,238,215,0.93)';
+  ctx.fill();
+
+  ctx.fillStyle = '#222';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(npc.dialogue, npc.x, by + bh / 2);
+}
+
+function drawNpc(npc) {
+  circle(npc.x, npc.y, RADIUS, '#c8a020', '#ffe060', 2);
+  ctx.font = '11px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillStyle = '#ffe090';
+  ctx.fillText(npc.name, npc.x, npc.y - RADIUS - 4);
+  drawNpcDialogue(npc);
+}
+
+function drawTalkButton() {
+  if (!isNearNpc()) return;
+  const r      = talkBtnRect();
+  const selNpc = npcs.find(n => n.id === player.selectedNpcId);
+  const inRange = selNpc && Math.hypot(player.x - selNpc.x, player.y - selNpc.y) <= TALK_RADIUS;
+  const talking = selNpc && selNpc.talkTimer > 0;
+  const active  = inRange && !talking;
+
+  ctx.fillStyle = active ? 'rgba(40,160,80,0.90)' : 'rgba(28,28,28,0.82)';
+  ctx.fillRect(r.x, r.y, r.w, r.h);
+  ctx.strokeStyle = active ? '#8f8' : '#444';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(r.x, r.y, r.w, r.h);
+
+  ctx.font = 'bold 11px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = active ? '#fff' : (inRange ? '#686' : '#444');
+  ctx.fillText('TALK', r.x + r.w / 2, r.y + r.h / 2);
+}
+
 function drawWeapons() {
   const wr = weaponRects();
   drawWeaponTile(wr.sword.x, wr.sword.y, 'sword', player.attackCd, PLAYER_ATTACK_CD, player.weapon === 'sword');
   drawWeaponTile(wr.bow.x,   wr.bow.y,   'bow',   player.bowCd,    BOW_CD,           player.weapon === 'bow');
   drawAttackButton();
+  drawTalkButton();
 }
 
 function drawSelectedInfo() {
-  const enemy = enemies.find(e => e.id === player.selectedEnemyId);
-  if (!enemy) return;
-
-  const barW = 180, barH = 14;
   const cx = Math.floor(canvas.width / 2);
-  const y  = 8;
 
-  ctx.font = 'bold 13px monospace';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-  ctx.fillStyle = '#eee';
-  ctx.fillText(enemy.name, cx, y);
+  const enemy = enemies.find(e => e.id === player.selectedEnemyId);
+  if (enemy) {
+    const barW = 180, barH = 14, y = 8;
+    ctx.font = 'bold 13px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = '#eee';
+    ctx.fillText(enemy.name, cx, y);
 
-  const barX = cx - barW / 2;
-  const barY = y + 20;
-  ctx.fillStyle = '#222';
-  ctx.fillRect(barX, barY, barW, barH);
-  const hpFrac = enemy.hp / enemy.maxHp;
-  ctx.fillStyle = `hsl(${Math.round(hpFrac * 110)}, 65%, 42%)`;
-  ctx.fillRect(barX, barY, barW * hpFrac, barH);
-  ctx.strokeStyle = '#555';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(barX, barY, barW, barH);
-  ctx.font = '10px monospace';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#ddd';
-  ctx.fillText(`${enemy.hp} / ${enemy.maxHp}`, cx, barY + barH / 2);
+    const barX = cx - barW / 2, barY = y + 20;
+    ctx.fillStyle = '#222';
+    ctx.fillRect(barX, barY, barW, barH);
+    const hpFrac = enemy.hp / enemy.maxHp;
+    ctx.fillStyle = `hsl(${Math.round(hpFrac * 110)}, 65%, 42%)`;
+    ctx.fillRect(barX, barY, barW * hpFrac, barH);
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(barX, barY, barW, barH);
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#ddd';
+    ctx.fillText(`${enemy.hp} / ${enemy.maxHp}`, cx, barY + barH / 2);
+    return;
+  }
+
+  const npc = npcs.find(n => n.id === player.selectedNpcId);
+  if (npc) {
+    ctx.font = 'bold 13px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = '#ffe090';
+    ctx.fillText(npc.name, cx, 8);
+  }
 }
 
 function drawMinimap() {
@@ -637,6 +761,11 @@ function drawMinimap() {
   ctx.fillStyle = '#e44';
   for (const e of enemies) {
     ctx.fillRect(mm.x + e.x * scale - 2, mm.y + e.y * scale - 2, 4, 4);
+  }
+
+  ctx.fillStyle = '#ffe060';
+  for (const n of npcs) {
+    ctx.fillRect(mm.x + n.x * scale - 2, mm.y + n.y * scale - 2, 4, 4);
   }
 
   ctx.fillStyle = '#4af';
@@ -667,12 +796,20 @@ function draw() {
   for (const e of enemies) circle(e.x, e.y, ATTACK_RANGE, 'rgba(255,80,80,0.10)', 'rgba(255,100,100,0.35)', 1);
   circle(player.x, player.y, ATTACK_RANGE, 'rgba(68,170,255,0.10)', 'rgba(68,170,255,0.35)', 1);
 
-  // Selection ring
+  // Selection rings
   const selEnemy = enemies.find(e => e.id === player.selectedEnemyId);
   if (selEnemy) {
     ctx.beginPath();
     ctx.arc(selEnemy.x, selEnemy.y, RADIUS + 6, 0, Math.PI * 2);
     ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+  const selNpc = npcs.find(n => n.id === player.selectedNpcId);
+  if (selNpc) {
+    ctx.beginPath();
+    ctx.arc(selNpc.x, selNpc.y, RADIUS + 6, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,220,80,0.85)';
     ctx.lineWidth = 2;
     ctx.stroke();
   }
@@ -689,6 +826,9 @@ function draw() {
     ctx.lineTo(a.x, a.y);
     ctx.stroke();
   }
+
+  // NPCs
+  for (const n of npcs) drawNpc(n);
 
   // Character models
   for (const e of enemies) circle(e.x, e.y, RADIUS, '#c44', '#f88', 2);
