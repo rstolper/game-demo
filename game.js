@@ -23,7 +23,7 @@ const ENEMY_ATTACK         = 5;
 const ENEMY_ATTACK_CD      = 1.0;
 const ENEMY_REGEN_INTERVAL = 0.5;
 
-const VERSION = '2026-05-14 10:00';
+const VERSION = '2026-05-14 10:30';
 
 const ENEMY_SPAWN_MIN_DIST = 200;
 const REGEN_COMBAT_DELAY   = 3.0;
@@ -36,7 +36,7 @@ const TREE_MIN_DIST = 200;
 const MINIMAP_SIZE   = 130;
 const MINIMAP_MARGIN = 10;
 
-const BOW_RANGE      = 400;
+const BOW_RANGE      = 900;
 const BOW_CD         = 2.0;
 const ARROW_SPEED    = 500;
 const BOW_TAP_RADIUS = RADIUS * 3;
@@ -231,7 +231,24 @@ function handleTap(screenPos) {
   target = screenToWorld(screenPos.x, screenPos.y);
 }
 
-canvas.addEventListener('click', (e) => { if (!gameOver) handleTap(getEventPos(e)); });
+// Mouse: drag to move, click (no drag) to tap
+let mouseDown = false, mouseStartPos = null, mouseDragged = false;
+canvas.addEventListener('mousedown', (e) => {
+  if (!gameOver) { mouseDown = true; mouseStartPos = getEventPos(e); mouseDragged = false; }
+});
+canvas.addEventListener('mousemove', (e) => {
+  if (!gameOver && mouseDown && mouseStartPos) {
+    const p = getEventPos(e);
+    if (!mouseDragged && Math.hypot(p.x - mouseStartPos.x, p.y - mouseStartPos.y) > 4) mouseDragged = true;
+    if (mouseDragged) target = screenToWorld(p.x, p.y);
+  }
+});
+canvas.addEventListener('mouseup', (e) => {
+  if (!gameOver && mouseStartPos && !mouseDragged) handleTap(mouseStartPos);
+  mouseDown = false; mouseStartPos = null; mouseDragged = false;
+});
+canvas.addEventListener('mouseleave', () => { mouseDown = false; mouseStartPos = null; mouseDragged = false; });
+
 canvas.addEventListener('touchstart', (e) => {
   e.preventDefault();
   if (!gameOver) { touchStartPos = getEventPos(e); touchDragged = false; }
