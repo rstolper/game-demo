@@ -23,16 +23,32 @@ const ENEMY_ATTACK         = 5;
 const ENEMY_ATTACK_CD      = 1.0;
 const ENEMY_REGEN_INTERVAL = 0.5;
 
-const VERSION = '2026-05-12 19:00';
+const VERSION = '2026-05-14 10:00';
 
 const ENEMY_SPAWN_MIN_DIST = 200;
 const REGEN_COMBAT_DELAY   = 3.0;
 const REGEN_INTERVAL       = 0.3;
 
+const TREE_SIZE     = 48;
+const TREE_COUNT    = 70;
+const TREE_MIN_DIST = 200;
+
+const MINIMAP_SIZE   = 130;
+const MINIMAP_MARGIN = 10;
+
+const BOW_RANGE      = 400;
+const BOW_CD         = 2.0;
+const ARROW_SPEED    = 500;
+const BOW_TAP_RADIUS = RADIUS * 3;
+
+const WEAPON_SIZE   = 52;
+const WEAPON_MARGIN = 12;
+
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
-let player, target, enemies, nextId, gameOver, lastTime;
+let player, target, enemies, arrows, trees, nextId, gameOver, lastTime;
+let touchStartPos = null, touchDragged = false;
 
 function resize() {
   canvas.width  = window.innerWidth;
@@ -47,13 +63,28 @@ function init() {
     attackCd: 0, combatDelay: 0, regenTick: REGEN_INTERVAL,
     level: 1, xp: 0, damage: PLAYER_ATTACK,
     potionCd: 0,
+    weapon: 'sword', bowCd: 0,
   };
   target  = { x: player.x, y: player.y };
   enemies = [];
+  arrows  = [];
   nextId  = 0;
   gameOver = false;
   lastTime = null;
+  initTrees();
   initEnemies();
+}
+
+function initTrees() {
+  trees = [];
+  let attempts = 0;
+  while (trees.length < TREE_COUNT && attempts < 3000) {
+    attempts++;
+    const x = TREE_SIZE * 1.5 + Math.random() * (MAP_W - TREE_SIZE * 3);
+    const y = TREE_SIZE * 1.5 + Math.random() * (MAP_H - TREE_SIZE * 3);
+    if (Math.hypot(x - MAP_W / 2, y - MAP_H / 2) < TREE_MIN_DIST) continue;
+    trees.push({ x, y });
+  }
 }
 
 function initEnemies() {
@@ -82,6 +113,40 @@ function spawnEnemy() {
   enemies.push(makeEnemy(x, y));
 }
 
+// Circle-AABB: returns push vector to move circle out of rect, or null
+function resolveCircleRect(cx, cy, rx, ry, rw, rh) {
+  const nearX = Math.max(rx, Math.min(rx + rw, cx));
+  const nearY = Math.max(ry, Math.min(ry + rh, cy));
+  const dx = cx - nearX;
+  const dy = cy - nearY;
+  const dist = Math.hypot(dx, dy);
+  if (dist >= RADIUS) return null;
+  if (dist === 0) {
+    // Center inside rect — push to nearest edge
+    const dLeft  = cx - rx;
+    const dRight = rx + rw - cx;
+    const dTop   = cy - ry;
+    const dBot   = ry + rh - cy;
+    const minD   = Math.min(dLeft, dRight, dTop, dBot);
+    if (minD === dLeft)  return { px: -(RADIUS + dLeft),  py: 0 };
+    if (minD === dRight) return { px:  (RADIUS + dRight), py: 0 };
+    if (minD === dTop)   return { px: 0, py: -(RADIUS + dTop) };
+    return                       { px: 0, py:  (RADIUS + dBot) };
+  }
+  const overlap = RADIUS - dist;
+  return { px: (dx / dist) * overlap, py: (dy / dist) * overlap };
+}
+
+function applyTreeCollisions(entity) {
+  for (const t of trees) {
+    const push = resolveCircleRect(
+      entity.x, entity.y,
+      t.x - TREE_SIZE / 2, t.y - TREE_SIZE / 2, TREE_SIZE, TREE_SIZE
+    );
+    if (push) { entity.x += push.px; entity.y += push.py; }
+  }
+}
+
 function getEventPos(e) {
   const rect = canvas.getBoundingClientRect();
   if (e.touches) return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
@@ -96,29 +161,93 @@ function potionRect() {
   return { x: Math.floor(canvas.width / 2 - POTION_SIZE / 2), y: canvas.height - POTION_SIZE - 12, w: POTION_SIZE, h: POTION_SIZE };
 }
 
+function weaponRects() {
+  const rx = canvas.width - WEAPON_SIZE - WEAPON_MARGIN;
+  const midY = Math.floor(canvas.height / 2);
+  return {
+    sword: { x: rx, y: midY - WEAPON_SIZE - 4 },
+    bow:   { x: rx, y: midY + 4 },
+  };
+}
+
+function minimapRect() {
+  return { x: canvas.width - MINIMAP_SIZE - MINIMAP_MARGIN, y: MINIMAP_MARGIN };
+}
+
 function usePotion() {
   if (player.potionCd > 0) return;
   player.hp = Math.min(PLAYER_MAX_HP, player.hp + POTION_HEAL);
   player.potionCd = POTION_CD;
 }
 
+function shootArrow(enemy) {
+  const dx = enemy.x - player.x;
+  const dy = enemy.y - player.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist > BOW_RANGE) return;
+  player.bowCd = BOW_CD;
+  enemy.state = 'chasing';
+  arrows.push({
+    x: player.x, y: player.y,
+    vx: (dx / dist) * ARROW_SPEED,
+    vy: (dy / dist) * ARROW_SPEED,
+    lifetime: BOW_RANGE / ARROW_SPEED + 0.2,
+  });
+}
+
 function handleTap(screenPos) {
+  // Minimap area — ignore
+  const mm = minimapRect();
+  if (screenPos.x >= mm.x && screenPos.y <= MINIMAP_SIZE + MINIMAP_MARGIN * 2) return;
+
+  // Potion
   const r = potionRect();
   if (screenPos.x >= r.x && screenPos.x <= r.x + r.w && screenPos.y >= r.y && screenPos.y <= r.y + r.h) {
-    usePotion();
-  } else {
-    target = screenToWorld(screenPos.x, screenPos.y);
+    usePotion(); return;
   }
+
+  // Weapon tiles
+  const wr = weaponRects();
+  if (screenPos.x >= wr.sword.x && screenPos.x <= wr.sword.x + WEAPON_SIZE &&
+      screenPos.y >= wr.sword.y && screenPos.y <= wr.sword.y + WEAPON_SIZE) {
+    player.weapon = 'sword'; return;
+  }
+  if (screenPos.x >= wr.bow.x && screenPos.x <= wr.bow.x + WEAPON_SIZE &&
+      screenPos.y >= wr.bow.y && screenPos.y <= wr.bow.y + WEAPON_SIZE) {
+    player.weapon = 'bow'; return;
+  }
+
+  // Bow: tap near enemy to shoot; tap empty space to move
+  if (player.weapon === 'bow') {
+    const worldPos = screenToWorld(screenPos.x, screenPos.y);
+    for (const enemy of enemies) {
+      if (Math.hypot(worldPos.x - enemy.x, worldPos.y - enemy.y) <= BOW_TAP_RADIUS) {
+        if (player.bowCd <= 0) shootArrow(enemy);
+        return; // don't move player when tapping near an enemy
+      }
+    }
+  }
+
+  target = screenToWorld(screenPos.x, screenPos.y);
 }
 
 canvas.addEventListener('click', (e) => { if (!gameOver) handleTap(getEventPos(e)); });
 canvas.addEventListener('touchstart', (e) => {
   e.preventDefault();
-  if (!gameOver) handleTap(getEventPos(e));
+  if (!gameOver) { touchStartPos = getEventPos(e); touchDragged = false; }
 }, { passive: false });
 canvas.addEventListener('touchmove', (e) => {
   e.preventDefault();
-  if (!gameOver) { const p = getEventPos(e); target = screenToWorld(p.x, p.y); }
+  if (!gameOver && touchStartPos) {
+    const p = getEventPos(e);
+    if (!touchDragged && Math.hypot(p.x - touchStartPos.x, p.y - touchStartPos.y) > 12) touchDragged = true;
+    if (touchDragged) target = screenToWorld(p.x, p.y);
+  }
+}, { passive: false });
+canvas.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  if (!gameOver && !touchDragged && touchStartPos) handleTap(touchStartPos);
+  touchStartPos = null; touchDragged = false;
 }, { passive: false });
 document.getElementById('add-enemy').addEventListener('click', spawnEnemy);
 window.addEventListener('resize', resize);
@@ -140,6 +269,9 @@ function update(dt) {
   }
   player.x = Math.max(RADIUS, Math.min(MAP_W - RADIUS, player.x));
   player.y = Math.max(RADIUS, Math.min(MAP_H - RADIUS, player.y));
+  applyTreeCollisions(player);
+  player.x = Math.max(RADIUS, Math.min(MAP_W - RADIUS, player.x));
+  player.y = Math.max(RADIUS, Math.min(MAP_H - RADIUS, player.y));
 
   // Move enemies
   for (const enemy of enemies) {
@@ -153,6 +285,7 @@ function update(dt) {
         const step = Math.min(ENEMY_SPEED * dt, d - (ATTACK_RANGE + RADIUS));
         enemy.x += (player.x - enemy.x) / d * step;
         enemy.y += (player.y - enemy.y) / d * step;
+        applyTreeCollisions(enemy);
       }
     } else if (enemy.state === 'returning') {
       const rdx = enemy.spawnX - enemy.x;
@@ -164,6 +297,7 @@ function update(dt) {
         const step = Math.min(ENEMY_SPEED * dt, d);
         enemy.x += rdx / d * step;
         enemy.y += rdy / d * step;
+        applyTreeCollisions(enemy);
       }
     }
   }
@@ -171,9 +305,31 @@ function update(dt) {
   // Tick cooldowns
   player.attackCd = Math.max(0, player.attackCd - dt);
   player.potionCd = Math.max(0, player.potionCd - dt);
+  player.bowCd    = Math.max(0, player.bowCd - dt);
   for (const e of enemies) e.attackCd = Math.max(0, e.attackCd - dt);
 
-  // Combat
+  // Update arrows
+  arrows = arrows.filter(a => {
+    a.x += a.vx * dt;
+    a.y += a.vy * dt;
+    a.lifetime -= dt;
+    if (a.lifetime <= 0) return false;
+    for (const enemy of enemies) {
+      if (enemy.hp <= 0) continue;
+      if (Math.hypot(a.x - enemy.x, a.y - enemy.y) <= RADIUS) {
+        enemy.hp = Math.max(0, enemy.hp - player.damage);
+        if (enemy.hp === 0) {
+          player.xp += 20;
+          while (player.xp >= 100) { player.xp -= 100; player.level++; player.damage++; }
+        }
+        return false;
+      }
+    }
+    return true;
+  });
+  enemies = enemies.filter(e => e.hp > 0);
+
+  // Combat (enemies always attack in melee; player attacks with sword)
   let anyInRange = false;
   for (const e of enemies) e.inCombat = false;
 
@@ -188,7 +344,7 @@ function update(dt) {
     }
   }
 
-  if (player.attackCd <= 0 && anyInRange) {
+  if (player.weapon === 'sword' && player.attackCd <= 0 && anyInRange) {
     player.attackCd = PLAYER_ATTACK_CD;
     for (const enemy of enemies) {
       if (Math.hypot(player.x - enemy.x, player.y - enemy.y) <= ATTACK_RANGE + RADIUS) {
@@ -254,6 +410,20 @@ function hpText(x, y, hp, maxHp) {
   ctx.fillText(`${hp}/${maxHp}`, x, y - RADIUS - 4);
 }
 
+function drawTree(t) {
+  const x = t.x - TREE_SIZE / 2;
+  const y = t.y - TREE_SIZE / 2;
+  ctx.fillStyle = '#1c5c1c';
+  ctx.fillRect(x, y, TREE_SIZE, TREE_SIZE);
+  ctx.strokeStyle = '#0d3a0d';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, TREE_SIZE, TREE_SIZE);
+  // Trunk
+  const tw = 10, th = 14;
+  ctx.fillStyle = '#4a2d0a';
+  ctx.fillRect(x + (TREE_SIZE - tw) / 2, y + TREE_SIZE - th, tw, th);
+}
+
 function drawPotion() {
   const { x, y, w, h } = potionRect();
   const cx = x + w / 2;
@@ -283,6 +453,96 @@ function drawPotion() {
   }
 }
 
+function drawSwordIcon(cx, cy, color) {
+  ctx.strokeStyle = color;
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(cx, cy - 14); ctx.lineTo(cx, cy + 6); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx - 8, cy + 4); ctx.lineTo(cx + 8, cy + 4); ctx.stroke();
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(cx, cy + 6); ctx.lineTo(cx, cy + 14); ctx.stroke();
+}
+
+function drawBowIcon(cx, cy, color) {
+  ctx.strokeStyle = color;
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 2;
+  // Arc of bow
+  ctx.beginPath();
+  ctx.arc(cx + 5, cy, 13, Math.PI * 0.58, Math.PI * 1.42, false);
+  ctx.stroke();
+  // String
+  const sx = cx + 5 + 13 * Math.cos(Math.PI * 0.58);
+  const sy1 = cy + 13 * Math.sin(Math.PI * 0.58);
+  const sy2 = cy + 13 * Math.sin(Math.PI * 1.42);
+  ctx.beginPath(); ctx.moveTo(sx, sy1); ctx.lineTo(sx, sy2); ctx.stroke();
+  // Arrow shaft + head
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(cx - 11, cy); ctx.lineTo(cx + 7, cy); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx + 7, cy); ctx.lineTo(cx + 3, cy - 3);
+  ctx.moveTo(cx + 7, cy); ctx.lineTo(cx + 3, cy + 3);
+  ctx.stroke();
+}
+
+function drawWeaponTile(x, y, type, cd, maxCd, selected) {
+  const w = WEAPON_SIZE, h = WEAPON_SIZE;
+  ctx.fillStyle = selected ? 'rgba(40,80,180,0.88)' : 'rgba(28,28,28,0.82)';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = selected ? '#88aaff' : '#444';
+  ctx.lineWidth = selected ? 2 : 1.5;
+  ctx.strokeRect(x, y, w, h);
+
+  const iconColor = cd > 0 ? '#555' : (selected ? '#ddf' : '#aaa');
+  if (type === 'sword') drawSwordIcon(x + w / 2, y + h / 2, iconColor);
+  else                  drawBowIcon(x + w / 2, y + h / 2, iconColor);
+
+  if (cd > 0) {
+    const frac = Math.min(cd / maxCd, 1);
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(x, y + h * (1 - frac), w, h * frac);
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = '#888';
+    ctx.fillText(Math.ceil(cd) + 's', x + w / 2, y + h - 3);
+  }
+}
+
+function drawWeapons() {
+  const wr = weaponRects();
+  drawWeaponTile(wr.sword.x, wr.sword.y, 'sword', player.attackCd, PLAYER_ATTACK_CD, player.weapon === 'sword');
+  drawWeaponTile(wr.bow.x,   wr.bow.y,   'bow',   player.bowCd,    BOW_CD,           player.weapon === 'bow');
+}
+
+function drawMinimap() {
+  const mm = minimapRect();
+  const scale = MINIMAP_SIZE / Math.max(MAP_W, MAP_H);
+
+  ctx.fillStyle = 'rgba(0,0,0,0.65)';
+  ctx.fillRect(mm.x, mm.y, MINIMAP_SIZE, MINIMAP_SIZE);
+  ctx.strokeStyle = '#555';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(mm.x, mm.y, MINIMAP_SIZE, MINIMAP_SIZE);
+
+  // Trees
+  ctx.fillStyle = '#1a4a1a';
+  for (const t of trees) {
+    const ts = TREE_SIZE * scale;
+    ctx.fillRect(mm.x + t.x * scale - ts / 2, mm.y + t.y * scale - ts / 2, ts, ts);
+  }
+
+  // Enemies
+  ctx.fillStyle = '#e44';
+  for (const e of enemies) {
+    ctx.fillRect(mm.x + e.x * scale - 2, mm.y + e.y * scale - 2, 4, 4);
+  }
+
+  // Player
+  ctx.fillStyle = '#4af';
+  ctx.fillRect(mm.x + player.x * scale - 2.5, mm.y + player.y * scale - 2.5, 5, 5);
+}
+
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -297,12 +557,28 @@ function draw() {
   ctx.lineWidth = 6;
   ctx.strokeRect(0, 0, MAP_W, MAP_H);
 
+  // Trees
+  for (const t of trees) drawTree(t);
+
   // Target indicator
   circle(target.x, target.y, 5, 'rgba(255,255,255,0.11)', null);
 
-  // Attack range rings (bottom layer)
+  // Attack range rings
   for (const e of enemies) circle(e.x, e.y, ATTACK_RANGE, 'rgba(255,80,80,0.10)', 'rgba(255,100,100,0.35)', 1);
   circle(player.x, player.y, ATTACK_RANGE, 'rgba(68,170,255,0.10)', 'rgba(68,170,255,0.35)', 1);
+
+  // Arrows
+  ctx.strokeStyle = '#ffcc44';
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  for (const a of arrows) {
+    const mag = Math.hypot(a.vx, a.vy);
+    const len = 14;
+    ctx.beginPath();
+    ctx.moveTo(a.x - (a.vx / mag) * len, a.y - (a.vy / mag) * len);
+    ctx.lineTo(a.x, a.y);
+    ctx.stroke();
+  }
 
   // Character models
   for (const e of enemies) circle(e.x, e.y, RADIUS, '#c44', '#f88', 2);
@@ -323,6 +599,8 @@ function draw() {
   ctx.fillStyle = 'rgba(255,255,255,0.55)';
   ctx.fillText(`XP  ${player.xp} / 100`, 10, 30);
 
+  drawMinimap();
+  drawWeapons();
   drawPotion();
 
   ctx.font = '11px monospace';
