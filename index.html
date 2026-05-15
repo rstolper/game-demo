@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Game Demo</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #111; overflow: hidden; font-family: sans-serif; }
+    #header {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 44px;
+      background: #1a1a1a;
+      border-bottom: 1px solid #333;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding: 0 14px;
+      z-index: 10;
+    }
+    #add-enemy {
+      background: #2a2a2a;
+      color: #bbb;
+      border: 1px solid #444;
+      padding: 6px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    #add-enemy:hover { background: #383838; color: #eee; }
+    canvas {
+      display: block;
+      position: fixed;
+      top: 44px;
+      left: 0;
+      cursor: crosshair;
+    }
+  </style>
+</head>
+<body>
+  <div id="header">
+    <button id="add-enemy">Add Enemy</button>
+  </div>
+  <canvas id="canvas"></canvas>
+  <script>
+    const s = document.createElement('script');
+    s.src = 'game.js?v=' + Date.now();
+    document.body.appendChild(s);
+  </script>
+</body>
+</html>
