@@ -1,885 +1,943 @@
-const HEADER_HEIGHT = 44;
-const RADIUS = 18;
-const ATTACK_RANGE = RADIUS * 2.5;
-const SPEED = 300;
-const ENEMY_SPEED = 120;
-const SPAWN_LEASH = 700;  // how far player can be from enemy spawn before enemy gives up
+const VERSION = '2026-05-15 14:00';
 
-const MAP_W = 3000;
-const MAP_H = 3000;
-
+const RADIUS           = 18;
+const ATTACK_RANGE     = RADIUS * 2.5;
+const SPEED            = 300;
+const ENEMY_SPEED      = 120;
+const SPAWN_LEASH      = 700;
+const MAP_W            = 3000;
+const MAP_H            = 3000;
 const PLAYER_MAX_HP    = 100;
 const PLAYER_ATTACK    = 5;
 const PLAYER_ATTACK_CD = 1.0;
-
-const POTION_HEAL = 50;
-const POTION_CD   = 20;
-const POTION_SIZE = 52;
-
+const POTION_HEAL      = 50;
+const POTION_CD        = 20;
+const POTION_SIZE      = 52;
 const ENEMY_MAX_HP         = 20;
 const ENEMY_ATTACK         = 5;
 const ENEMY_ATTACK_CD      = 1.0;
 const ENEMY_REGEN_INTERVAL = 0.5;
-
-const VERSION = '2026-05-14 12:00';
-
 const ENEMY_SPAWN_MIN_DIST = 200;
 const REGEN_COMBAT_DELAY   = 3.0;
 const REGEN_INTERVAL       = 0.3;
-
 const TREE_SIZE     = 48;
 const TREE_COUNT    = 70;
 const TREE_MIN_DIST = 200;
-
 const MINIMAP_SIZE   = 130;
 const MINIMAP_MARGIN = 10;
-
 const BOW_RANGE   = 900;
 const BOW_CD      = 2.0;
 const ARROW_SPEED = 500;
-
 const WEAPON_SIZE   = 52;
 const WEAPON_MARGIN = 12;
 const ATTACK_BTN_H  = 28;
 const TALK_BTN_H    = 28;
-
 const TALK_RADIUS   = 150;
 const TALK_DURATION = 10.0;
 
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
+// Terrain zones — rectangular areas placed on the map
+const LAKE_ZONE  = { x: 1900, y: 400,  w: 600, h: 400 }; // northeast lake
+const BEACH_ZONE = { x: 1848, y: 348,  w: 704, h: 504 }; // sand border around lake
+const FARM_ZONE  = { x: 300,  y: 2100, w: 750, h: 500 }; // southwest farmland
 
-let player, target, enemies, arrows, trees, npcs, nextId, gameOver, lastTime;
-let touchStartPos = null, touchDragged = false;
+// Sprite sheet layout: Player.png and Skeleton.png are both 192×320, 32×32 per frame (6 cols × 10 rows)
+// Player.png / Skeleton.png — 192×320, 32×32 per frame (6 cols × 10 rows)
+// Row 0: walk down  (frames  0-5)
+// Row 1: walk right (frames  6-11)
+// Row 2: walk up    (frames 12-17)
+// Left = right mirrored (flipX)
 
-function resize() {
-  canvas.width  = window.innerWidth;
-  canvas.height = window.innerHeight - HEADER_HEIGHT;
-}
+// Player_Actions.png — 96×576, 48×48 per frame (2 cols × 12 rows)
+// Row 2 (frames 4-5):  sword swing, facing right
+// Row 3 (frames 6-7):  sword swing, facing down (toward camera)
+// Row 4 (frames 8-9):  sword swing, facing up   (away from camera)
+const SPRITE_W = 32;
+const SPRITE_H = 32;
+// Row 0=down, Row 1=right, Row 2=up. No separate left row — left is right flipped horizontally.
+const WALK_FRAMES = { down: 0, right: 6, up: 12 };
+const IDLE_FRAME  = { down: 1, right: 7, up: 13 };
 
-function init() {
-  resize();
-  player = {
-    x: MAP_W / 2, y: MAP_H / 2,
-    hp: PLAYER_MAX_HP,
-    attackCd: 0, combatDelay: 0, regenTick: REGEN_INTERVAL,
-    level: 1, xp: 0, damage: PLAYER_ATTACK,
-    potionCd: 0,
-    weapon: 'sword', bowCd: 0,
-    selectedEnemyId: null,
-    selectedNpcId: null,
-    attackTarget: null,   // id of enemy player is actively chasing to melee
-  };
-  target   = { x: player.x, y: player.y };
-  enemies  = [];
-  arrows   = [];
-  npcs     = [];
-  nextId   = 0;
-  gameOver = false;
-  lastTime = null;
-  initTrees();
-  initEnemies();
-  initNpcs();
-}
+class GameScene extends Phaser.Scene {
+  constructor() { super('GameScene'); }
 
-function initTrees() {
-  trees = [];
-  let attempts = 0;
-  while (trees.length < TREE_COUNT && attempts < 3000) {
-    attempts++;
-    const x = TREE_SIZE * 1.5 + Math.random() * (MAP_W - TREE_SIZE * 3);
-    const y = TREE_SIZE * 1.5 + Math.random() * (MAP_H - TREE_SIZE * 3);
-    if (Math.hypot(x - MAP_W / 2, y - MAP_H / 2) < TREE_MIN_DIST) continue;
-    trees.push({ x, y });
+  preload() {
+    this.load.spritesheet('player',         'assets/Player/Player.png',            { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
+    this.load.spritesheet('player-actions', 'assets/Player/Player_Actions.png',    { frameWidth: 48, frameHeight: 48 });
+    this.load.spritesheet('skeleton',       'assets/Enemies/Skeleton.png',         { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
+    this.load.image('grass',   'assets/Tiles/Grass_Middle.png');
+    this.load.image('water',   'assets/Tiles/Water_Middle.png');
+    this.load.image('beach',   'assets/Tiles/Beach_Tile.png');
+    this.load.image('farmland','assets/Tiles/FarmLand_Tile.png');
+    this.load.image('tree',    'assets/Outdoor decoration/Oak_Tree.png');
   }
-}
 
-function initEnemies() {
-  for (let i = 0; i < 15; i++) {
-    let x, y;
-    do {
-      x = RADIUS + Math.random() * (MAP_W - RADIUS * 2);
-      y = RADIUS + Math.random() * (MAP_H - RADIUS * 2);
-    } while (Math.hypot(x - player.x, y - player.y) < 300);
-    enemies.push(makeEnemy(x, y));
+  create() {
+    this.nextId    = 0;
+    this.gameOver  = false;
+    this.pDownPos  = null;   // screen pos of pointer-down
+    this.pDownTime = 0;
+    this.pMoved    = false;  // true once pointer drifts past tap threshold
+
+    this.player = {
+      x: MAP_W / 2, y: MAP_H / 2,
+      hp: PLAYER_MAX_HP,
+      attackCd: 0, combatDelay: 0, regenTick: REGEN_INTERVAL,
+      level: 1, xp: 0, damage: PLAYER_ATTACK,
+      potionCd: 0, weapon: 'sword', bowCd: 0,
+      selectedEnemyId: null, selectedNpcId: null, attackTarget: null,
+      facing: 'down', swingTimer: 0,
+    };
+    this.target  = { x: this.player.x, y: this.player.y };
+    this.enemies = [];
+    this.arrows  = [];
+    this.npcs    = [];
+    this.trees   = [];
+
+    this.createAnimations();
+
+    // Ground — tiled grass across the whole map
+    this.add.tileSprite(0, 0, MAP_W, MAP_H, 'grass').setOrigin(0, 0).setDepth(0);
+
+    // Terrain zones
+    this.add.tileSprite(FARM_ZONE.x,  FARM_ZONE.y,  FARM_ZONE.w,  FARM_ZONE.h,  'farmland').setOrigin(0, 0).setDepth(1);
+    this.add.tileSprite(BEACH_ZONE.x, BEACH_ZONE.y, BEACH_ZONE.w, BEACH_ZONE.h, 'beach'   ).setOrigin(0, 0).setDepth(2);
+    this.add.tileSprite(LAKE_ZONE.x,  LAKE_ZONE.y,  LAKE_ZONE.w,  LAKE_ZONE.h,  'water'   ).setOrigin(0, 0).setDepth(3);
+
+    // worldGfx: overlays only (rings, arrows, border) — depth above ground, below sprites
+    this.worldGfx = this.add.graphics().setDepth(50);
+    // uiGfx: screen-space HUD
+    this.uiGfx = this.add.graphics().setScrollFactor(0).setDepth(200);
+
+    // World-space text (above sprites)
+    this.playerHpText = this.add.text(0, 0, '', {
+      fontFamily: 'monospace', fontSize: '11px', color: '#dddddd',
+    }).setOrigin(0.5, 1).setDepth(120);
+
+    this.enemyTextMap = new Map(); // id -> { hp: Text, sprite: Sprite }
+    this.npcTextMap   = new Map(); // id -> { name: Text, dialogue: Text, sprite: Sprite }
+
+    this.initTrees();
+    this.initEnemies();
+    this.initNpcs();
+
+    // Player sprite (created after init so depth sorts correctly from the start)
+    this.playerSprite = this.add.sprite(this.player.x, this.player.y, 'player')
+      .setDepth(this.player.y)
+      .setScale(1.5);
+    this.playerSprite.play('player-idle-down');
+
+    // Action sprite overlaid on player for sword-swing animation
+    // Scale 1.5 matches the walk sprite (32×1.5=48px), action frames are 48px so 48×1.5=72px displayed
+    this.playerActionSprite = this.add.sprite(this.player.x, this.player.y, 'player-actions')
+      .setDepth(this.player.y)
+      .setScale(1.5)
+      .setVisible(false);
+
+    // Screen-space UI text
+    const mono = (sz, col, bold) => ({ fontFamily: 'monospace', fontSize: sz, color: col, fontStyle: bold ? 'bold' : 'normal' });
+    const ui   = (obj) => obj.setScrollFactor(0).setDepth(200);
+    const W = this.W, H = this.H;
+
+    this.levelText      = ui(this.add.text(10, 12, '', mono('13px', '#ffffff'))).setAlpha(0.85);
+    this.xpText         = ui(this.add.text(10, 30, '', mono('13px', '#ffffff'))).setAlpha(0.55);
+    this.selNameText    = ui(this.add.text(W / 2, 8, '', mono('13px', '#eeeeee', true))).setOrigin(0.5, 0).setVisible(false);
+    this.selHpText      = ui(this.add.text(W / 2, 35, '', mono('10px', '#dddddd'))).setOrigin(0.5, 0.5).setVisible(false);
+    this.versionText    = ui(this.add.text(8, H - 8, VERSION, mono('11px', '#ffffff'))).setAlpha(0.25).setOrigin(0, 1);
+    this.attackBtnText  = ui(this.add.text(0, 0, 'ATTACK', mono('11px', '#ffffff', true))).setOrigin(0.5, 0.5);
+    this.talkBtnText    = ui(this.add.text(0, 0, 'TALK',   mono('11px', '#ffffff', true))).setOrigin(0.5, 0.5).setVisible(false);
+    this.swordCdText    = ui(this.add.text(0, 0, '', mono('11px', '#888888', true))).setOrigin(0.5, 1).setVisible(false);
+    this.bowCdText      = ui(this.add.text(0, 0, '', mono('11px', '#888888', true))).setOrigin(0.5, 1).setVisible(false);
+    this.potionCdText   = ui(this.add.text(0, 0, '', mono('11px', '#888888', true))).setOrigin(0.5, 1).setVisible(false);
+
+    this.gameOverText = ui(this.add.text(W / 2, H / 2 - 24, 'Game Over', {
+      fontFamily: 'sans-serif', fontSize: '56px', color: '#ff5555', fontStyle: 'bold',
+    })).setOrigin(0.5, 0.5).setDepth(300).setVisible(false);
+    this.gameOverSubText = ui(this.add.text(W / 2, H / 2 + 28, 'Reload the page to play again', {
+      fontFamily: 'sans-serif', fontSize: '18px', color: '#999999',
+    })).setOrigin(0.5, 0.5).setDepth(300).setVisible(false);
+
+    // Input
+    this.input.on('pointerdown', this.onPointerDown, this);
+    this.input.on('pointermove', this.onPointerMove, this);
+    this.input.on('pointerup',   this.onPointerUp,   this);
+
+    document.getElementById('add-enemy').addEventListener('click', () => this.spawnEnemy());
+
+    this.scale.on('resize', (gs) => {
+      const nW = gs.width, nH = gs.height;
+      this.selNameText.setX(nW / 2);
+      this.selHpText.setX(nW / 2);
+      this.versionText.setY(nH - 8);
+      this.gameOverText.setPosition(nW / 2, nH / 2 - 24);
+      this.gameOverSubText.setPosition(nW / 2, nH / 2 + 28);
+    });
   }
-}
 
-function makeEnemy(x, y) {
-  return { id: nextId++, x, y, spawnX: x, spawnY: y, state: 'idle',
-           name: 'Wild Boar',
-           hp: ENEMY_MAX_HP, maxHp: ENEMY_MAX_HP,
-           attackCd: 0, regenTick: ENEMY_REGEN_INTERVAL, combatDelay: 0 };
-}
+  createAnimations() {
+    // Walk/idle: 3 directional rows; left reuses right with flipX
+    const dirs = [['down', 0], ['right', 6], ['up', 12]];
 
-function makeNpc(x, y, name, dialogue) {
-  return { id: nextId++, x, y, name, dialogue, talkTimer: 0 };
-}
+    for (const [sheet] of [['player'], ['skeleton']]) {
+      for (const [dir, start] of dirs) {
+        this.anims.create({
+          key: `${sheet}-walk-${dir}`,
+          frames: this.anims.generateFrameNumbers(sheet, { start, end: start + 5 }),
+          frameRate: 8,
+          repeat: -1,
+        });
+        this.anims.create({
+          key: `${sheet}-idle-${dir}`,
+          frames: [{ key: sheet, frame: start + 1 }],
+          frameRate: 1,
+        });
+      }
+    }
 
-function initNpcs() {
-  // Jimmy stands a short walk east of the player's starting position
-  npcs.push(makeNpc(MAP_W / 2 + 350, MAP_H / 2, 'Jimmy', 'Hello!'));
-}
-
-function spawnEnemy() {
-  if (gameOver) return;
-  const angle = Math.random() * Math.PI * 2;
-  const dist  = ENEMY_SPAWN_MIN_DIST + Math.random() * 200;
-  const x = Math.max(RADIUS, Math.min(MAP_W - RADIUS, player.x + Math.cos(angle) * dist));
-  const y = Math.max(RADIUS, Math.min(MAP_H - RADIUS, player.y + Math.sin(angle) * dist));
-  enemies.push(makeEnemy(x, y));
-}
-
-// Circle-AABB: returns push vector to move circle out of rect, or null
-function resolveCircleRect(cx, cy, rx, ry, rw, rh) {
-  const nearX = Math.max(rx, Math.min(rx + rw, cx));
-  const nearY = Math.max(ry, Math.min(ry + rh, cy));
-  const dx = cx - nearX;
-  const dy = cy - nearY;
-  const dist = Math.hypot(dx, dy);
-  if (dist >= RADIUS) return null;
-  if (dist === 0) {
-    const dLeft  = cx - rx;
-    const dRight = rx + rw - cx;
-    const dTop   = cy - ry;
-    const dBot   = ry + rh - cy;
-    const minD   = Math.min(dLeft, dRight, dTop, dBot);
-    if (minD === dLeft)  return { px: -(RADIUS + dLeft),  py: 0 };
-    if (minD === dRight) return { px:  (RADIUS + dRight), py: 0 };
-    if (minD === dTop)   return { px: 0, py: -(RADIUS + dTop) };
-    return                       { px: 0, py:  (RADIUS + dBot) };
-  }
-  const overlap = RADIUS - dist;
-  return { px: (dx / dist) * overlap, py: (dy / dist) * overlap };
-}
-
-function applyTreeCollisions(entity) {
-  for (const t of trees) {
-    const push = resolveCircleRect(
-      entity.x, entity.y,
-      t.x - TREE_SIZE / 2, t.y - TREE_SIZE / 2, TREE_SIZE, TREE_SIZE
-    );
-    if (push) { entity.x += push.px; entity.y += push.py; }
-  }
-}
-
-function getEventPos(e) {
-  const rect = canvas.getBoundingClientRect();
-  if (e.touches) return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
-  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-}
-
-function screenToWorld(sx, sy) {
-  return { x: sx + player.x - canvas.width / 2, y: sy + player.y - canvas.height / 2 };
-}
-
-function inRect(pos, r) {
-  return pos.x >= r.x && pos.x <= r.x + r.w && pos.y >= r.y && pos.y <= r.y + r.h;
-}
-
-function potionRect() {
-  return { x: Math.floor(canvas.width / 2 - POTION_SIZE / 2), y: canvas.height - POTION_SIZE - 12, w: POTION_SIZE, h: POTION_SIZE };
-}
-
-function weaponRects() {
-  const rx = canvas.width - WEAPON_SIZE - WEAPON_MARGIN;
-  const midY = Math.floor(canvas.height / 2);
-  return {
-    sword: { x: rx, y: midY - WEAPON_SIZE - 4, w: WEAPON_SIZE, h: WEAPON_SIZE },
-    bow:   { x: rx, y: midY + 4,               w: WEAPON_SIZE, h: WEAPON_SIZE },
-  };
-}
-
-function attackBtnRect() {
-  const wr = weaponRects();
-  return { x: wr.bow.x, y: wr.bow.y + WEAPON_SIZE + 8, w: WEAPON_SIZE, h: ATTACK_BTN_H };
-}
-
-function talkBtnRect() {
-  const ab = attackBtnRect();
-  return { x: ab.x, y: ab.y + ATTACK_BTN_H + 6, w: WEAPON_SIZE, h: TALK_BTN_H };
-}
-
-function isNearNpc() {
-  return npcs.some(n => Math.hypot(player.x - n.x, player.y - n.y) <= TALK_RADIUS);
-}
-
-function minimapRect() {
-  return { x: canvas.width - MINIMAP_SIZE - MINIMAP_MARGIN, y: MINIMAP_MARGIN };
-}
-
-function usePotion() {
-  if (player.potionCd > 0) return;
-  player.hp = Math.min(PLAYER_MAX_HP, player.hp + POTION_HEAL);
-  player.potionCd = POTION_CD;
-}
-
-function shootArrow(enemy) {
-  const dx = enemy.x - player.x;
-  const dy = enemy.y - player.y;
-  const dist = Math.hypot(dx, dy);
-  if (dist > BOW_RANGE || player.bowCd > 0) return;
-  player.bowCd = BOW_CD;
-  enemy.state = 'chasing';
-  arrows.push({
-    x: player.x, y: player.y,
-    vx: (dx / dist) * ARROW_SPEED,
-    vy: (dy / dist) * ARROW_SPEED,
-    lifetime: BOW_RANGE / ARROW_SPEED + 0.2,
-  });
-}
-
-function executeAttack() {
-  const enemy = enemies.find(e => e.id === player.selectedEnemyId);
-  if (!enemy) return;
-  if (player.weapon === 'bow') {
-    shootArrow(enemy);
-  } else {
-    player.attackTarget = enemy.id;
-  }
-}
-
-function executeTalk() {
-  const npc = npcs.find(n => n.id === player.selectedNpcId);
-  if (!npc) return;
-  if (Math.hypot(player.x - npc.x, player.y - npc.y) > TALK_RADIUS) return;
-  if (npc.talkTimer > 0) return;
-  npc.talkTimer = TALK_DURATION;
-}
-
-function handleTap(screenPos) {
-  // Minimap — ignore
-  const mm = minimapRect();
-  if (screenPos.x >= mm.x && screenPos.y <= MINIMAP_SIZE + MINIMAP_MARGIN * 2) return;
-
-  // Potion
-  if (inRect(screenPos, potionRect())) { usePotion(); return; }
-
-  // Weapon tiles
-  const wr = weaponRects();
-  if (inRect(screenPos, wr.sword)) { player.weapon = 'sword'; return; }
-  if (inRect(screenPos, wr.bow))   { player.weapon = 'bow';   return; }
-
-  // Attack button
-  if (inRect(screenPos, attackBtnRect())) { executeAttack(); return; }
-
-  // Talk button (only visible when near an NPC)
-  if (isNearNpc() && inRect(screenPos, talkBtnRect())) { executeTalk(); return; }
-
-  // World-space entity selection
-  const worldPos = screenToWorld(screenPos.x, screenPos.y);
-
-  // Enemy selection
-  for (const enemy of enemies) {
-    if (Math.hypot(worldPos.x - enemy.x, worldPos.y - enemy.y) <= RADIUS * 1.5) {
-      player.selectedEnemyId = enemy.id;
-      player.selectedNpcId   = null;
-      player.attackTarget    = null;
-      return;
+    // Sword swing (Player_Actions.png, 48×48, 2 cols × 12 rows)
+    // Row 3 = right, Row 4 = down, Row 5 = up  (left mirrors right via flipX)
+    for (const [dir, row] of [['right', 3], ['down', 4], ['up', 5]]) {
+      this.anims.create({
+        key: `player-sword-${dir}`,
+        frames: this.anims.generateFrameNumbers('player-actions', { start: row * 2, end: row * 2 + 1 }),
+        frameRate: 10,
+        repeat: 0,
+      });
     }
   }
 
-  // NPC selection
-  for (const npc of npcs) {
-    if (Math.hypot(worldPos.x - npc.x, worldPos.y - npc.y) <= RADIUS * 1.5) {
-      player.selectedNpcId   = npc.id;
-      player.selectedEnemyId = null;
-      player.attackTarget    = null;
-      return;
+  // ── Helpers ────────────────────────────────────────────────────────────
+
+  get W() { return this.scale.width; }
+  get H() { return this.scale.height; }
+
+  getFacing(dx, dy) {
+    if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? 'right' : 'left';
+    return dy > 0 ? 'down' : 'up';
+  }
+
+  playSpriteAnim(sprite, key) {
+    if (!sprite.anims.currentAnim || sprite.anims.currentAnim.key !== key) sprite.play(key);
+  }
+
+  updateEntityAnim(sprite, sheet, facing, moving) {
+    const flipX  = facing === 'left';
+    const animDir = flipX ? 'right' : facing;
+    const key    = moving ? `${sheet}-walk-${animDir}` : `${sheet}-idle-${animDir}`;
+    this.playSpriteAnim(sprite, key);
+    sprite.setFlipX(flipX);
+  }
+
+  // ── Init ───────────────────────────────────────────────────────────────
+
+  initTrees() {
+    let attempts = 0;
+    while (this.trees.length < TREE_COUNT && attempts < 3000) {
+      attempts++;
+      const x = TREE_SIZE * 1.5 + Math.random() * (MAP_W - TREE_SIZE * 3);
+      const y = TREE_SIZE * 1.5 + Math.random() * (MAP_H - TREE_SIZE * 3);
+      if (Math.hypot(x - MAP_W / 2, y - MAP_H / 2) < TREE_MIN_DIST) continue;
+      if (this.inRect(x, y, BEACH_ZONE) || this.inRect(x, y, FARM_ZONE)) continue;
+      this.trees.push({ x, y });
+      // Sprite: anchor at trunk base (bottom-center of collision box), canopy extends up
+      this.add.image(x, y + TREE_SIZE / 2, 'tree')
+        .setOrigin(0.5, 1)
+        .setDepth(y + TREE_SIZE / 2)
+        .setScale(1.2);
     }
   }
 
-  // Tap empty space — deselect everything
-  player.selectedEnemyId = null;
-  player.selectedNpcId   = null;
-  player.attackTarget    = null;
-}
-
-// Mouse: drag to move, click (no drag) to tap
-let mouseDown = false, mouseStartPos = null, mouseDragged = false;
-canvas.addEventListener('mousedown', (e) => {
-  if (!gameOver) { mouseDown = true; mouseStartPos = getEventPos(e); mouseDragged = false; }
-});
-canvas.addEventListener('mousemove', (e) => {
-  if (!gameOver && mouseDown && mouseStartPos) {
-    const p = getEventPos(e);
-    if (!mouseDragged && Math.hypot(p.x - mouseStartPos.x, p.y - mouseStartPos.y) > 4) mouseDragged = true;
-    if (mouseDragged) target = screenToWorld(p.x, p.y);
+  initEnemies() {
+    for (let i = 0; i < 15; i++) {
+      let x, y;
+      do {
+        x = RADIUS + Math.random() * (MAP_W - RADIUS * 2);
+        y = RADIUS + Math.random() * (MAP_H - RADIUS * 2);
+      } while (Math.hypot(x - this.player.x, y - this.player.y) < 300);
+      this.addEnemy(x, y);
+    }
   }
-});
-canvas.addEventListener('mouseup', (e) => {
-  if (!gameOver && mouseStartPos && !mouseDragged) handleTap(mouseStartPos);
-  mouseDown = false; mouseStartPos = null; mouseDragged = false;
-});
-canvas.addEventListener('mouseleave', () => { mouseDown = false; mouseStartPos = null; mouseDragged = false; });
 
-canvas.addEventListener('touchstart', (e) => {
-  e.preventDefault();
-  if (!gameOver) { touchStartPos = getEventPos(e); touchDragged = false; }
-}, { passive: false });
-canvas.addEventListener('touchmove', (e) => {
-  e.preventDefault();
-  if (!gameOver && touchStartPos) {
-    const p = getEventPos(e);
-    if (!touchDragged && Math.hypot(p.x - touchStartPos.x, p.y - touchStartPos.y) > 12) touchDragged = true;
-    if (touchDragged) target = screenToWorld(p.x, p.y);
+  initNpcs() {
+    this.addNpc(MAP_W / 2 + 350, MAP_H / 2, 'Jimmy', 'Hello!');
   }
-}, { passive: false });
-canvas.addEventListener('touchend', (e) => {
-  e.preventDefault();
-  if (!gameOver && !touchDragged && touchStartPos) handleTap(touchStartPos);
-  touchStartPos = null; touchDragged = false;
-}, { passive: false });
-document.getElementById('add-enemy').addEventListener('click', spawnEnemy);
-window.addEventListener('resize', resize);
 
-init();
+  addEnemy(x, y) {
+    const enemy = {
+      id: this.nextId++, x, y, spawnX: x, spawnY: y, state: 'idle',
+      name: 'Skeleton', facing: 'down',
+      hp: ENEMY_MAX_HP, maxHp: ENEMY_MAX_HP,
+      attackCd: 0, regenTick: ENEMY_REGEN_INTERVAL, combatDelay: 0,
+    };
+    this.enemies.push(enemy);
 
-function update(dt) {
-  if (gameOver) return;
+    const sprite = this.add.sprite(x, y, 'skeleton').setDepth(y).setScale(1.5);
+    sprite.play('skeleton-idle-down');
 
-  // Steer toward melee attack target
-  if (player.attackTarget !== null) {
-    const tgt = enemies.find(e => e.id === player.attackTarget);
-    if (!tgt) {
-      player.attackTarget = null;
-    } else {
-      const tdx = player.x - tgt.x;
-      const tdy = player.y - tgt.y;
-      const td = Math.hypot(tdx, tdy);
-      const stopAt = ATTACK_RANGE + RADIUS * 0.5;
-      if (td > stopAt) {
-        target = { x: tgt.x + (tdx / td) * stopAt, y: tgt.y + (tdy / td) * stopAt };
+    this.enemyTextMap.set(enemy.id, {
+      sprite,
+      hp: this.add.text(0, 0, '', {
+        fontFamily: 'monospace', fontSize: '11px', color: '#dddddd',
+      }).setOrigin(0.5, 1).setDepth(120),
+    });
+    return enemy;
+  }
+
+  addNpc(x, y, name, dialogue) {
+    const npc = { id: this.nextId++, x, y, name, dialogue, talkTimer: 0 };
+    this.npcs.push(npc);
+
+    // NPC uses player spritesheet tinted gold to distinguish from the player
+    const sprite = this.add.sprite(x, y, 'player').setDepth(y).setScale(1.5).setTint(0xffcc44);
+    sprite.play('player-idle-down');
+
+    this.npcTextMap.set(npc.id, {
+      sprite,
+      name: this.add.text(x, y - RADIUS - 4, name, {
+        fontFamily: 'monospace', fontSize: '11px', color: '#ffe090',
+      }).setOrigin(0.5, 1).setDepth(120),
+      dialogue: this.add.text(x, y - RADIUS - 20, dialogue, {
+        fontFamily: 'monospace', fontSize: '12px', color: '#222222',
+        backgroundColor: '#f0eed7', padding: { x: 8, y: 4 },
+      }).setOrigin(0.5, 1).setDepth(121).setVisible(false),
+    });
+    return npc;
+  }
+
+  removeEnemy(enemy) {
+    const t = this.enemyTextMap.get(enemy.id);
+    if (t) {
+      t.hp.destroy();
+      t.sprite.destroy();
+      this.enemyTextMap.delete(enemy.id);
+    }
+  }
+
+  spawnEnemy() {
+    if (this.gameOver) return;
+    const angle = Math.random() * Math.PI * 2;
+    const dist  = ENEMY_SPAWN_MIN_DIST + Math.random() * 200;
+    const x = Math.max(RADIUS, Math.min(MAP_W - RADIUS, this.player.x + Math.cos(angle) * dist));
+    const y = Math.max(RADIUS, Math.min(MAP_H - RADIUS, this.player.y + Math.sin(angle) * dist));
+    this.addEnemy(x, y);
+  }
+
+  // ── Collision ──────────────────────────────────────────────────────────
+
+  resolveCircleRect(cx, cy, rx, ry, rw, rh) {
+    const nearX = Math.max(rx, Math.min(rx + rw, cx));
+    const nearY = Math.max(ry, Math.min(ry + rh, cy));
+    const dx = cx - nearX, dy = cy - nearY;
+    const dist = Math.hypot(dx, dy);
+    if (dist >= RADIUS) return null;
+    if (dist === 0) {
+      const dL = cx - rx, dR = rx + rw - cx, dT = cy - ry, dB = ry + rh - cy;
+      const m  = Math.min(dL, dR, dT, dB);
+      if (m === dL) return { px: -(RADIUS + dL), py: 0 };
+      if (m === dR) return { px:  (RADIUS + dR), py: 0 };
+      if (m === dT) return { px: 0, py: -(RADIUS + dT) };
+      return                { px: 0, py:  (RADIUS + dB) };
+    }
+    const overlap = RADIUS - dist;
+    return { px: (dx / dist) * overlap, py: (dy / dist) * overlap };
+  }
+
+  applyTreeCollisions(entity) {
+    for (const t of this.trees) {
+      const push = this.resolveCircleRect(
+        entity.x, entity.y,
+        t.x - TREE_SIZE / 2, t.y - TREE_SIZE / 2, TREE_SIZE, TREE_SIZE,
+      );
+      if (push) { entity.x += push.px; entity.y += push.py; }
+    }
+  }
+
+  // ── Input ──────────────────────────────────────────────────────────────
+
+  onPointerDown(pointer) {
+    if (this.gameOver) return;
+    this.pDownPos  = { x: pointer.x, y: pointer.y };
+    this.pDownTime = this.time.now;
+    this.pMoved    = false;
+  }
+
+  onPointerMove(pointer) {
+    if (!this.pDownPos || !pointer.isDown) return;
+    if (!this.pMoved && Math.hypot(pointer.x - this.pDownPos.x, pointer.y - this.pDownPos.y) > (pointer.wasTouch ? 12 : 4)) {
+      this.pMoved = true;
+    }
+  }
+
+  onPointerUp(pointer) {
+    if (this.gameOver) return;
+    if (!this.pMoved && this.pDownPos) this.handleTap(this.pDownPos.x, this.pDownPos.y);
+    this.pDownPos = null;
+    this.pMoved   = false;
+  }
+
+  isPointerOverUI(px, py) {
+    const mm = this.minimapRect();
+    if (px >= mm.x && py <= MINIMAP_SIZE + MINIMAP_MARGIN * 2) return true;
+    if (this.inRect(px, py, this.potionRect())) return true;
+    const wr = this.weaponRects();
+    if (this.inRect(px, py, wr.sword) || this.inRect(px, py, wr.bow)) return true;
+    if (this.inRect(px, py, this.attackBtnRect())) return true;
+    if (this.isNearNpc() && this.inRect(px, py, this.talkBtnRect())) return true;
+    return false;
+  }
+
+  updatePointerMovement() {
+    const pointer = this.input.activePointer;
+    if (!pointer.isDown || !this.pDownPos) return;
+    if (this.isPointerOverUI(pointer.x, pointer.y)) return;
+    if (!this.pMoved && Math.hypot(pointer.x - this.pDownPos.x, pointer.y - this.pDownPos.y) > (pointer.wasTouch ? 12 : 4)) {
+      this.pMoved = true;
+    }
+    const wp = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+    this.target = { x: wp.x, y: wp.y };
+    this.player.attackTarget = null;
+  }
+
+  // ── UI layout ──────────────────────────────────────────────────────────
+
+  potionRect() {
+    return { x: Math.floor(this.W / 2 - POTION_SIZE / 2), y: this.H - POTION_SIZE - 12, w: POTION_SIZE, h: POTION_SIZE };
+  }
+
+  weaponRects() {
+    const rx   = this.W - WEAPON_SIZE - WEAPON_MARGIN;
+    const midY = Math.floor(this.H / 2);
+    return {
+      sword: { x: rx, y: midY - WEAPON_SIZE - 4, w: WEAPON_SIZE, h: WEAPON_SIZE },
+      bow:   { x: rx, y: midY + 4,               w: WEAPON_SIZE, h: WEAPON_SIZE },
+    };
+  }
+
+  attackBtnRect() {
+    const wr = this.weaponRects();
+    return { x: wr.bow.x, y: wr.bow.y + WEAPON_SIZE + 8, w: WEAPON_SIZE, h: ATTACK_BTN_H };
+  }
+
+  talkBtnRect() {
+    const ab = this.attackBtnRect();
+    return { x: ab.x, y: ab.y + ATTACK_BTN_H + 6, w: WEAPON_SIZE, h: TALK_BTN_H };
+  }
+
+  minimapRect() {
+    return { x: this.W - MINIMAP_SIZE - MINIMAP_MARGIN, y: MINIMAP_MARGIN };
+  }
+
+  inRect(px, py, r) {
+    return px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
+  }
+
+  isNearNpc() {
+    return this.npcs.some(n => Math.hypot(this.player.x - n.x, this.player.y - n.y) <= TALK_RADIUS);
+  }
+
+  // ── Actions ────────────────────────────────────────────────────────────
+
+  usePotion() {
+    if (this.player.potionCd > 0) return;
+    this.player.hp       = Math.min(PLAYER_MAX_HP, this.player.hp + POTION_HEAL);
+    this.player.potionCd = POTION_CD;
+  }
+
+  shootArrow(enemy) {
+    const dx = enemy.x - this.player.x, dy = enemy.y - this.player.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > BOW_RANGE || this.player.bowCd > 0) return;
+    this.player.bowCd   = BOW_CD;
+    enemy.state = 'chasing';
+    this.arrows.push({
+      x: this.player.x, y: this.player.y,
+      vx: (dx / dist) * ARROW_SPEED, vy: (dy / dist) * ARROW_SPEED,
+      lifetime: BOW_RANGE / ARROW_SPEED + 0.2,
+    });
+  }
+
+  executeAttack() {
+    const enemy = this.enemies.find(e => e.id === this.player.selectedEnemyId);
+    if (!enemy) return;
+    if (this.player.weapon === 'bow') this.shootArrow(enemy);
+    else this.player.attackTarget = enemy.id;
+  }
+
+  executeTalk() {
+    // Use selected NPC if in range, otherwise auto-pick the nearest one
+    let npc = this.npcs.find(n => n.id === this.player.selectedNpcId
+      && Math.hypot(this.player.x - n.x, this.player.y - n.y) <= TALK_RADIUS);
+    if (!npc) {
+      npc = this.npcs
+        .filter(n => Math.hypot(this.player.x - n.x, this.player.y - n.y) <= TALK_RADIUS)
+        .sort((a, b) => Math.hypot(this.player.x - a.x, this.player.y - a.y)
+                      - Math.hypot(this.player.x - b.x, this.player.y - b.y))[0];
+    }
+    if (!npc || npc.talkTimer > 0) return;
+    npc.talkTimer = TALK_DURATION;
+  }
+
+  handleTap(sx, sy) {
+    const mm = this.minimapRect();
+    if (sx >= mm.x && sy <= MINIMAP_SIZE + MINIMAP_MARGIN * 2) return;
+    if (this.inRect(sx, sy, this.potionRect()))  { this.usePotion(); return; }
+
+    const wr = this.weaponRects();
+    if (this.inRect(sx, sy, wr.sword)) { this.player.weapon = 'sword'; return; }
+    if (this.inRect(sx, sy, wr.bow))   { this.player.weapon = 'bow';   return; }
+
+    if (this.inRect(sx, sy, this.attackBtnRect())) { this.executeAttack(); return; }
+    if (this.isNearNpc() && this.inRect(sx, sy, this.talkBtnRect())) { this.executeTalk(); return; }
+
+    const wp = this.cameras.main.getWorldPoint(sx, sy);
+
+    for (const enemy of this.enemies) {
+      if (Math.hypot(wp.x - enemy.x, wp.y - enemy.y) <= RADIUS * 1.5) {
+        this.player.selectedEnemyId = enemy.id;
+        this.player.selectedNpcId   = null;
+        this.player.attackTarget    = null;
+        return;
+      }
+    }
+    for (const npc of this.npcs) {
+      if (Math.hypot(wp.x - npc.x, wp.y - npc.y) <= RADIUS * 1.5) {
+        this.player.selectedNpcId   = npc.id;
+        this.player.selectedEnemyId = null;
+        this.player.attackTarget    = null;
+        return;
+      }
+    }
+
+    this.player.selectedEnemyId = null;
+    this.player.selectedNpcId   = null;
+    this.player.attackTarget    = null;
+  }
+
+  // ── Game update ────────────────────────────────────────────────────────
+
+  updateGame(dt) {
+    const player = this.player;
+
+    if (player.attackTarget !== null) {
+      const tgt = this.enemies.find(e => e.id === player.attackTarget);
+      if (!tgt) {
+        player.attackTarget = null;
       } else {
-        target = { x: player.x, y: player.y }; // in range — stop moving
+        const tdx = player.x - tgt.x, tdy = player.y - tgt.y;
+        const td   = Math.hypot(tdx, tdy);
+        const stopAt = ATTACK_RANGE + RADIUS * 0.5;
+        if (td > stopAt) this.target = { x: tgt.x + (tdx / td) * stopAt, y: tgt.y + (tdy / td) * stopAt };
+        else             this.target = { x: player.x, y: player.y };
       }
     }
-  }
 
-  // Move player
-  const dx = target.x - player.x;
-  const dy = target.y - player.y;
-  const distToTarget = Math.hypot(dx, dy);
-  const isMoving = distToTarget > 2;
-  if (isMoving) {
-    const step = Math.min(SPEED * dt, distToTarget);
-    player.x += (dx / distToTarget) * step;
-    player.y += (dy / distToTarget) * step;
-  }
-  player.x = Math.max(RADIUS, Math.min(MAP_W - RADIUS, player.x));
-  player.y = Math.max(RADIUS, Math.min(MAP_H - RADIUS, player.y));
-  applyTreeCollisions(player);
-  player.x = Math.max(RADIUS, Math.min(MAP_W - RADIUS, player.x));
-  player.y = Math.max(RADIUS, Math.min(MAP_H - RADIUS, player.y));
-
-  // Move enemies — de-aggro when player strays too far from enemy's home
-  for (const enemy of enemies) {
-    if (enemy.state === 'chasing') {
-      const d = Math.hypot(player.x - enemy.x, player.y - enemy.y);
-      const playerFromSpawn = Math.hypot(player.x - enemy.spawnX, player.y - enemy.spawnY);
-      if (playerFromSpawn > SPAWN_LEASH) {
-        enemy.state = 'returning';
-      } else if (d > ATTACK_RANGE + RADIUS) {
-        const step = Math.min(ENEMY_SPEED * dt, d - (ATTACK_RANGE + RADIUS));
-        enemy.x += (player.x - enemy.x) / d * step;
-        enemy.y += (player.y - enemy.y) / d * step;
-        applyTreeCollisions(enemy);
-      }
-    } else if (enemy.state === 'returning') {
-      const rdx = enemy.spawnX - enemy.x;
-      const rdy = enemy.spawnY - enemy.y;
-      const d = Math.hypot(rdx, rdy);
-      if (d < 2) {
-        enemy.x = enemy.spawnX; enemy.y = enemy.spawnY; enemy.state = 'idle';
-      } else {
-        const step = Math.min(ENEMY_SPEED * dt, d);
-        enemy.x += rdx / d * step;
-        enemy.y += rdy / d * step;
-        applyTreeCollisions(enemy);
-      }
+    const dx = this.target.x - player.x, dy = this.target.y - player.y;
+    const distToTarget = Math.hypot(dx, dy);
+    const isMoving = distToTarget > 2;
+    if (isMoving) {
+      const step = Math.min(SPEED * dt, distToTarget);
+      player.x += (dx / distToTarget) * step;
+      player.y += (dy / distToTarget) * step;
+      player.facing = this.getFacing(dx, dy);
     }
-  }
+    player.x = Math.max(RADIUS, Math.min(MAP_W - RADIUS, player.x));
+    player.y = Math.max(RADIUS, Math.min(MAP_H - RADIUS, player.y));
+    this.applyTreeCollisions(player);
+    player.x = Math.max(RADIUS, Math.min(MAP_W - RADIUS, player.x));
+    player.y = Math.max(RADIUS, Math.min(MAP_H - RADIUS, player.y));
 
-  // Tick cooldowns
-  player.attackCd = Math.max(0, player.attackCd - dt);
-  player.potionCd = Math.max(0, player.potionCd - dt);
-  player.bowCd    = Math.max(0, player.bowCd - dt);
-  for (const e of enemies) e.attackCd = Math.max(0, e.attackCd - dt);
-
-  // Update arrows
-  arrows = arrows.filter(a => {
-    a.x += a.vx * dt;
-    a.y += a.vy * dt;
-    a.lifetime -= dt;
-    if (a.lifetime <= 0) return false;
-    for (const enemy of enemies) {
-      if (enemy.hp <= 0) continue;
-      if (Math.hypot(a.x - enemy.x, a.y - enemy.y) <= RADIUS) {
-        enemy.hp = Math.max(0, enemy.hp - player.damage);
-        if (enemy.hp === 0) {
-          player.xp += 20;
-          while (player.xp >= 100) { player.xp -= 100; player.level++; player.damage++; }
+    for (const enemy of this.enemies) {
+      const prevX = enemy.x, prevY = enemy.y;
+      if (enemy.state === 'chasing') {
+        const d = Math.hypot(player.x - enemy.x, player.y - enemy.y);
+        const playerFromSpawn = Math.hypot(player.x - enemy.spawnX, player.y - enemy.spawnY);
+        if (playerFromSpawn > SPAWN_LEASH) {
+          enemy.state = 'returning';
+        } else if (d > ATTACK_RANGE) {
+          const step = Math.min(ENEMY_SPEED * dt, d - ATTACK_RANGE);
+          enemy.x += (player.x - enemy.x) / d * step;
+          enemy.y += (player.y - enemy.y) / d * step;
+          this.applyTreeCollisions(enemy);
         }
-        return false;
-      }
-    }
-    return true;
-  });
-  enemies = enemies.filter(e => e.hp > 0);
-
-  // Combat (enemies always attack in melee; player auto-attacks with sword when in range)
-  let anyInRange = false;
-  for (const e of enemies) e.inCombat = false;
-
-  for (const enemy of enemies) {
-    if (Math.hypot(player.x - enemy.x, player.y - enemy.y) > ATTACK_RANGE + RADIUS) continue;
-    anyInRange = true;
-    enemy.inCombat = true;
-    if (enemy.attackCd <= 0) {
-      enemy.attackCd = ENEMY_ATTACK_CD;
-      player.hp = Math.max(0, player.hp - ENEMY_ATTACK);
-      if (player.hp === 0) { gameOver = true; return; }
-    }
-  }
-
-  if (player.weapon === 'sword' && player.attackCd <= 0 && anyInRange) {
-    player.attackCd = PLAYER_ATTACK_CD;
-    for (const enemy of enemies) {
-      if (Math.hypot(player.x - enemy.x, player.y - enemy.y) <= ATTACK_RANGE + RADIUS) {
-        enemy.hp = Math.max(0, enemy.hp - player.damage);
-        if (enemy.hp === 0) {
-          player.xp += 20;
-          while (player.xp >= 100) { player.xp -= 100; player.level++; player.damage++; }
+      } else if (enemy.state === 'returning') {
+        const rdx = enemy.spawnX - enemy.x, rdy = enemy.spawnY - enemy.y;
+        const d = Math.hypot(rdx, rdy);
+        if (d < 2) {
+          enemy.x = enemy.spawnX; enemy.y = enemy.spawnY; enemy.state = 'idle';
         } else {
-          enemy.state = 'chasing';
+          const step = Math.min(ENEMY_SPEED * dt, d);
+          enemy.x += rdx / d * step;
+          enemy.y += rdy / d * step;
+          this.applyTreeCollisions(enemy);
+        }
+      }
+      const movedX = enemy.x - prevX, movedY = enemy.y - prevY;
+      if (Math.hypot(movedX, movedY) > 0.1) enemy.facing = this.getFacing(movedX, movedY);
+    }
+
+    player.attackCd  = Math.max(0, player.attackCd  - dt);
+    player.potionCd  = Math.max(0, player.potionCd  - dt);
+    player.bowCd     = Math.max(0, player.bowCd     - dt);
+    player.swingTimer = Math.max(0, player.swingTimer - dt);
+    for (const e of this.enemies) e.attackCd = Math.max(0, e.attackCd - dt);
+
+    const deadIds = new Set();
+    this.arrows = this.arrows.filter(a => {
+      a.x += a.vx * dt; a.y += a.vy * dt; a.lifetime -= dt;
+      if (a.lifetime <= 0) return false;
+      for (const enemy of this.enemies) {
+        if (enemy.hp <= 0) continue;
+        if (Math.hypot(a.x - enemy.x, a.y - enemy.y) <= RADIUS) {
+          enemy.hp = Math.max(0, enemy.hp - player.damage);
+          if (enemy.hp === 0) { this.awardXp(); deadIds.add(enemy.id); }
+          return false;
+        }
+      }
+      return true;
+    });
+
+    let anyInRange = false;
+    for (const e of this.enemies) e.inCombat = false;
+
+    for (const enemy of this.enemies) {
+      if (Math.hypot(player.x - enemy.x, player.y - enemy.y) > ATTACK_RANGE + RADIUS) continue;
+      anyInRange     = true;
+      enemy.inCombat = true;
+      if (enemy.attackCd <= 0) {
+        enemy.attackCd = ENEMY_ATTACK_CD;
+        player.hp = Math.max(0, player.hp - ENEMY_ATTACK);
+        if (player.hp === 0) { this.onGameOver(); return; }
+      }
+    }
+
+    if (player.weapon === 'sword' && player.attackCd <= 0 && anyInRange) {
+      player.attackCd   = PLAYER_ATTACK_CD;
+      player.swingTimer = 0.25;
+      for (const enemy of this.enemies) {
+        if (Math.hypot(player.x - enemy.x, player.y - enemy.y) <= ATTACK_RANGE + RADIUS) {
+          enemy.hp = Math.max(0, enemy.hp - player.damage);
+          if (enemy.hp === 0) { this.awardXp(); deadIds.add(enemy.id); }
+          else enemy.state = 'chasing';
         }
       }
     }
-  }
 
-  enemies = enemies.filter(e => e.hp > 0);
+    for (const enemy of this.enemies) {
+      if (deadIds.has(enemy.id)) this.removeEnemy(enemy);
+    }
+    this.enemies = this.enemies.filter(e => !deadIds.has(e.id));
 
-  // Clean up stale selection / attack target
-  if (player.selectedEnemyId !== null && !enemies.some(e => e.id === player.selectedEnemyId)) {
-    player.selectedEnemyId = null;
-  }
-  if (player.attackTarget !== null && !enemies.some(e => e.id === player.attackTarget)) {
-    player.attackTarget = null;
-  }
+    if (player.selectedEnemyId !== null && !this.enemies.some(e => e.id === player.selectedEnemyId)) player.selectedEnemyId = null;
+    if (player.attackTarget    !== null && !this.enemies.some(e => e.id === player.attackTarget))    player.attackTarget    = null;
 
-  // Enemy regen
-  for (const enemy of enemies) {
-    if (enemy.inCombat || enemy.state !== 'idle') {
-      enemy.combatDelay = REGEN_COMBAT_DELAY;
-      enemy.regenTick   = ENEMY_REGEN_INTERVAL;
+    for (const enemy of this.enemies) {
+      if (enemy.inCombat || enemy.state !== 'idle') {
+        enemy.combatDelay = REGEN_COMBAT_DELAY;
+        enemy.regenTick   = ENEMY_REGEN_INTERVAL;
+      } else {
+        enemy.combatDelay = Math.max(0, enemy.combatDelay - dt);
+        if (enemy.combatDelay <= 0 && enemy.hp < enemy.maxHp) {
+          enemy.regenTick -= dt;
+          if (enemy.regenTick <= 0) {
+            enemy.regenTick = ENEMY_REGEN_INTERVAL;
+            enemy.hp = Math.min(enemy.maxHp, enemy.hp + 1);
+          }
+        }
+      }
+    }
+
+    for (const npc of this.npcs) {
+      if (npc.talkTimer > 0) npc.talkTimer = Math.max(0, npc.talkTimer - dt);
+    }
+
+    if (anyInRange) {
+      player.combatDelay = REGEN_COMBAT_DELAY;
+      player.regenTick   = REGEN_INTERVAL;
     } else {
-      enemy.combatDelay = Math.max(0, enemy.combatDelay - dt);
-      if (enemy.combatDelay <= 0 && enemy.hp < enemy.maxHp) {
-        enemy.regenTick -= dt;
-        if (enemy.regenTick <= 0) {
-          enemy.regenTick = ENEMY_REGEN_INTERVAL;
-          enemy.hp = Math.min(enemy.maxHp, enemy.hp + 1);
+      player.combatDelay = Math.max(0, player.combatDelay - dt);
+      if (player.combatDelay <= 0 && !isMoving && player.hp < PLAYER_MAX_HP) {
+        player.regenTick -= dt;
+        if (player.regenTick <= 0) {
+          player.regenTick = REGEN_INTERVAL;
+          player.hp = Math.min(PLAYER_MAX_HP, player.hp + 1);
         }
       }
     }
   }
 
-  // NPC talk timers
-  for (const npc of npcs) {
-    if (npc.talkTimer > 0) npc.talkTimer = Math.max(0, npc.talkTimer - dt);
+  awardXp() {
+    this.player.xp += 20;
+    while (this.player.xp >= 100) { this.player.xp -= 100; this.player.level++; this.player.damage++; }
   }
 
-  // Player regen
-  if (anyInRange) {
-    player.combatDelay = REGEN_COMBAT_DELAY;
-    player.regenTick   = REGEN_INTERVAL;
-  } else {
-    player.combatDelay = Math.max(0, player.combatDelay - dt);
-    if (player.combatDelay <= 0 && !isMoving && player.hp < PLAYER_MAX_HP) {
-      player.regenTick -= dt;
-      if (player.regenTick <= 0) {
-        player.regenTick = REGEN_INTERVAL;
-        player.hp = Math.min(PLAYER_MAX_HP, player.hp + 1);
+  onGameOver() {
+    this.gameOver = true;
+    this.gameOverText.setVisible(true);
+    this.gameOverSubText.setVisible(true);
+  }
+
+  // ── Camera ─────────────────────────────────────────────────────────────
+
+  syncCamera() {
+    const W = this.W, H = this.H;
+    this.cameras.main.setScroll(
+      Math.max(0, Math.min(MAP_W - W, this.player.x - W / 2)),
+      Math.max(0, Math.min(MAP_H - H, this.player.y - H / 2)),
+    );
+  }
+
+  // ── Rendering ──────────────────────────────────────────────────────────
+
+  renderWorld() {
+    const g = this.worldGfx;
+    g.clear();
+
+    // Map border
+    g.lineStyle(6, 0x666666, 1);
+    g.strokeRect(0, 0, MAP_W, MAP_H);
+
+    // Target indicator
+    g.fillStyle(0xffffff, 0.15);
+    g.fillCircle(this.target.x, this.target.y, 6);
+
+    // Attack range rings
+    for (const e of this.enemies) {
+      g.fillStyle(0xff5050, 0.07);
+      g.fillCircle(e.x, e.y, ATTACK_RANGE);
+      g.lineStyle(1, 0xff6464, 0.25);
+      g.strokeCircle(e.x, e.y, ATTACK_RANGE);
+    }
+    g.fillStyle(0x44aaff, 0.07);
+    g.fillCircle(this.player.x, this.player.y, ATTACK_RANGE);
+    g.lineStyle(1, 0x44aaff, 0.25);
+    g.strokeCircle(this.player.x, this.player.y, ATTACK_RANGE);
+
+    // Selection rings
+    const selEnemy = this.enemies.find(e => e.id === this.player.selectedEnemyId);
+    if (selEnemy) {
+      g.lineStyle(2, 0xffffff, 0.85);
+      g.strokeCircle(selEnemy.x, selEnemy.y, RADIUS + 10);
+    }
+    const selNpc = this.npcs.find(n => n.id === this.player.selectedNpcId);
+    if (selNpc) {
+      g.lineStyle(2, 0xffdc50, 0.85);
+      g.strokeCircle(selNpc.x, selNpc.y, RADIUS + 10);
+    }
+
+    // Arrows
+    for (const a of this.arrows) {
+      const mag = Math.hypot(a.vx, a.vy), len = 14;
+      g.lineStyle(2, 0xffcc44, 1);
+      g.beginPath();
+      g.moveTo(a.x - (a.vx / mag) * len, a.y - (a.vy / mag) * len);
+      g.lineTo(a.x, a.y);
+      g.strokePath();
+    }
+
+    // ── Update sprites ─────────────────────────────────────────────────
+
+    // Player
+    const isMoving = Math.hypot(this.target.x - this.player.x, this.target.y - this.player.y) > 2;
+    const swinging = this.player.swingTimer > 0 && this.player.weapon === 'sword';
+    const depth    = this.player.y;
+
+    this.playerSprite.setPosition(this.player.x, this.player.y).setDepth(depth).setVisible(!swinging);
+    this.playerActionSprite.setPosition(this.player.x, this.player.y).setDepth(depth).setVisible(swinging);
+
+    if (swinging) {
+      const flipX  = this.player.facing === 'left';
+      const dir    = flipX ? 'right' : (this.player.facing === 'down' || this.player.facing === 'up' ? this.player.facing : 'right');
+      this.playSpriteAnim(this.playerActionSprite, `player-sword-${dir}`);
+      this.playerActionSprite.setFlipX(flipX);
+    } else {
+      this.updateEntityAnim(this.playerSprite, 'player', this.player.facing, isMoving);
+    }
+
+    this.playerHpText.setPosition(this.player.x, this.player.y - SPRITE_H - 4);
+    this.playerHpText.setText(`${this.player.hp}/${PLAYER_MAX_HP}`);
+
+    // Enemies
+    for (const enemy of this.enemies) {
+      const t = this.enemyTextMap.get(enemy.id);
+      if (!t) continue;
+      t.sprite.setPosition(enemy.x, enemy.y).setDepth(enemy.y);
+      const enemyMoving = enemy.state === 'chasing' || enemy.state === 'returning';
+      this.updateEntityAnim(t.sprite, 'skeleton', enemy.facing, enemyMoving);
+      t.hp.setPosition(enemy.x, enemy.y - SPRITE_H - 4).setText(`${enemy.hp}/${enemy.maxHp}`);
+    }
+
+    // NPCs
+    for (const npc of this.npcs) {
+      const t = this.npcTextMap.get(npc.id);
+      if (!t) continue;
+      t.name.setPosition(npc.x, npc.y - SPRITE_H - 4);
+      if (npc.talkTimer > 0) {
+        t.dialogue.setPosition(npc.x, npc.y - SPRITE_H - 22).setVisible(true);
+      } else {
+        t.dialogue.setVisible(false);
       }
     }
   }
-}
 
-function circle(x, y, r, fill, stroke, lw = 1.5) {
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.fillStyle = fill;
-  ctx.fill();
-  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
-}
+  renderUI() {
+    const g = this.uiGfx;
+    const W = this.W, H = this.H;
+    g.clear();
 
-function hpText(x, y, hp, maxHp) {
-  ctx.font = '11px monospace';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'bottom';
-  ctx.fillStyle = '#ddd';
-  ctx.fillText(`${hp}/${maxHp}`, x, y - RADIUS - 4);
-}
+    this.levelText.setText(`Level ${this.player.level}   Damage ${this.player.damage}`);
+    this.xpText.setText(`XP  ${this.player.xp} / 100`);
+    this.versionText.setY(H - 8);
 
-function drawTree(t) {
-  const x = t.x - TREE_SIZE / 2;
-  const y = t.y - TREE_SIZE / 2;
-  ctx.fillStyle = '#1c5c1c';
-  ctx.fillRect(x, y, TREE_SIZE, TREE_SIZE);
-  ctx.strokeStyle = '#0d3a0d';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x, y, TREE_SIZE, TREE_SIZE);
-  const tw = 10, th = 14;
-  ctx.fillStyle = '#4a2d0a';
-  ctx.fillRect(x + (TREE_SIZE - tw) / 2, y + TREE_SIZE - th, tw, th);
-}
+    const selEnemy = this.enemies.find(e => e.id === this.player.selectedEnemyId);
+    if (selEnemy) {
+      this.selNameText.setX(W / 2).setText(selEnemy.name).setColor('#eeeeee').setVisible(true);
+      const barW = 180, barH = 14, barX = W / 2 - barW / 2, barY = 28;
+      g.fillStyle(0x222222, 1); g.fillRect(barX, barY, barW, barH);
+      const hpFrac  = selEnemy.hp / selEnemy.maxHp;
+      const hpColor = Phaser.Display.Color.HSLToColor(hpFrac * 110 / 360, 0.65, 0.42).color;
+      g.fillStyle(hpColor, 1); g.fillRect(barX, barY, barW * hpFrac, barH);
+      g.lineStyle(1, 0x555555, 1); g.strokeRect(barX, barY, barW, barH);
+      this.selHpText.setPosition(W / 2, barY + barH / 2).setText(`${selEnemy.hp} / ${selEnemy.maxHp}`).setVisible(true);
+    } else {
+      const selNpc = this.npcs.find(n => n.id === this.player.selectedNpcId);
+      if (selNpc) { this.selNameText.setX(W / 2).setText(selNpc.name).setColor('#ffe090').setVisible(true); }
+      else         { this.selNameText.setVisible(false); }
+      this.selHpText.setVisible(false);
+    }
 
-function drawPotion() {
-  const { x, y, w, h } = potionRect();
-  const cx = x + w / 2;
-  const ready = player.potionCd <= 0;
+    const wr = this.weaponRects();
+    this.drawWeaponTile(g, wr.sword, 'sword', this.player.attackCd, PLAYER_ATTACK_CD, this.player.weapon === 'sword');
+    this.drawWeaponTile(g, wr.bow,   'bow',   this.player.bowCd,    BOW_CD,           this.player.weapon === 'bow');
 
-  ctx.fillStyle = ready ? 'rgba(60,10,80,0.88)' : 'rgba(28,28,28,0.82)';
-  ctx.fillRect(x, y, w, h);
-  ctx.strokeStyle = ready ? '#b05cff' : '#444';
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(x, y, w, h);
+    if (this.player.attackCd > 0) this.swordCdText.setPosition(wr.sword.x + WEAPON_SIZE / 2, wr.sword.y + WEAPON_SIZE - 3).setText(Math.ceil(this.player.attackCd) + 's').setVisible(true);
+    else this.swordCdText.setVisible(false);
+    if (this.player.bowCd > 0) this.bowCdText.setPosition(wr.bow.x + WEAPON_SIZE / 2, wr.bow.y + WEAPON_SIZE - 3).setText(Math.ceil(this.player.bowCd) + 's').setVisible(true);
+    else this.bowCdText.setVisible(false);
 
-  const bodyY = y + h * 0.64;
-  const neckX = cx - 3.5, neckY = bodyY - 13;
-  circle(cx, bodyY, 11, ready ? '#cc44ff' : '#555', null);
-  ctx.fillStyle = ready ? '#8822bb' : '#3a3a3a';
-  ctx.fillRect(neckX, neckY, 7, 11);
-  ctx.fillStyle = ready ? '#bb8844' : '#444';
-  ctx.fillRect(neckX + 0.5, neckY - 5, 6, 6);
-  if (ready) circle(cx - 4, bodyY - 4, 3, 'rgba(255,255,255,0.32)', null);
+    this.drawAttackButton(g);
+    this.drawTalkButton(g);
+    this.drawPotion(g);
+    this.drawMinimap(g);
 
-  if (!ready) {
-    ctx.font = 'bold 11px monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'bottom';
-    ctx.fillStyle = '#888';
-    ctx.fillText(Math.ceil(player.potionCd) + 's', cx, y + h - 3);
+    if (this.gameOver) {
+      g.fillStyle(0x000000, 0.72);
+      g.fillRect(0, 0, W, H);
+    }
+  }
+
+  drawWeaponTile(g, r, type, cd, maxCd, selected) {
+    g.fillStyle(selected ? 0x284880 : 0x1c1c1c, selected ? 0.88 : 0.82);
+    g.fillRect(r.x, r.y, r.w, r.h);
+    g.lineStyle(selected ? 2 : 1.5, selected ? 0x88aaff : 0x444444, 1);
+    g.strokeRect(r.x, r.y, r.w, r.h);
+
+    const ic = cd > 0 ? 0x555555 : (selected ? 0xdddeff : 0xaaaaaa);
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    if (type === 'sword') this.drawSwordIcon(g, cx, cy, ic);
+    else                  this.drawBowIcon(g, cx, cy, ic);
+
+    if (cd > 0) {
+      g.fillStyle(0x000000, 0.55);
+      g.fillRect(r.x, r.y + r.h * (1 - Math.min(cd / maxCd, 1)), r.w, r.h * Math.min(cd / maxCd, 1));
+    }
+  }
+
+  drawSwordIcon(g, cx, cy, color) {
+    g.lineStyle(2.5, color, 1);
+    g.beginPath(); g.moveTo(cx, cy - 14); g.lineTo(cx, cy + 6);       g.strokePath();
+    g.beginPath(); g.moveTo(cx - 8, cy + 4); g.lineTo(cx + 8, cy + 4); g.strokePath();
+    g.lineStyle(2, color, 1);
+    g.beginPath(); g.moveTo(cx, cy + 6); g.lineTo(cx, cy + 14);       g.strokePath();
+  }
+
+  drawBowIcon(g, cx, cy, color) {
+    g.lineStyle(2, color, 1);
+    g.beginPath(); g.arc(cx + 5, cy, 13, Math.PI * 0.58, Math.PI * 1.42, false); g.strokePath();
+    const sx = cx + 5 + 13 * Math.cos(Math.PI * 0.58);
+    const sy1 = cy + 13 * Math.sin(Math.PI * 0.58), sy2 = cy + 13 * Math.sin(Math.PI * 1.42);
+    g.beginPath(); g.moveTo(sx, sy1); g.lineTo(sx, sy2); g.strokePath();
+    g.lineStyle(1.5, color, 1);
+    g.beginPath(); g.moveTo(cx - 11, cy); g.lineTo(cx + 7, cy); g.strokePath();
+    g.beginPath(); g.moveTo(cx + 7, cy); g.lineTo(cx + 3, cy - 3); g.moveTo(cx + 7, cy); g.lineTo(cx + 3, cy + 3); g.strokePath();
+  }
+
+  drawAttackButton(g) {
+    const r      = this.attackBtnRect();
+    const hasSel = this.player.selectedEnemyId !== null && this.enemies.some(e => e.id === this.player.selectedEnemyId);
+    const active = hasSel && !(this.player.weapon === 'bow' && this.player.bowCd > 0);
+    g.fillStyle(active ? 0xb42828 : 0x1c1c1c, active ? 0.90 : 0.82);
+    g.fillRect(r.x, r.y, r.w, r.h);
+    g.lineStyle(1.5, active ? 0xff8888 : 0x444444, 1);
+    g.strokeRect(r.x, r.y, r.w, r.h);
+    this.attackBtnText.setPosition(r.x + r.w / 2, r.y + r.h / 2);
+    this.attackBtnText.setColor(active ? '#ffffff' : (hasSel ? '#aa6666' : '#444444'));
+  }
+
+  drawTalkButton(g) {
+    const nearNpc = this.npcs.find(n => Math.hypot(this.player.x - n.x, this.player.y - n.y) <= TALK_RADIUS);
+    if (!nearNpc) { this.talkBtnText.setVisible(false); return; }
+    const r      = this.talkBtnRect();
+    const active = nearNpc.talkTimer <= 0;
+    g.fillStyle(active ? 0x28a050 : 0x1c1c1c, active ? 0.90 : 0.82);
+    g.fillRect(r.x, r.y, r.w, r.h);
+    g.lineStyle(1.5, active ? 0x88ff88 : 0x444444, 1);
+    g.strokeRect(r.x, r.y, r.w, r.h);
+    this.talkBtnText.setPosition(r.x + r.w / 2, r.y + r.h / 2);
+    this.talkBtnText.setColor(active ? '#ffffff' : (inRange ? '#668866' : '#444444'));
+    this.talkBtnText.setVisible(true);
+  }
+
+  drawPotion(g) {
+    const { x, y, w, h } = this.potionRect();
+    const cx = x + w / 2, ready = this.player.potionCd <= 0;
+    g.fillStyle(ready ? 0x3c0a50 : 0x1c1c1c, ready ? 0.88 : 0.82);
+    g.fillRect(x, y, w, h);
+    g.lineStyle(1.5, ready ? 0xb05cff : 0x444444, 1);
+    g.strokeRect(x, y, w, h);
+    const bodyY = y + h * 0.64, neckX = cx - 3.5, neckY = bodyY - 13;
+    g.fillStyle(ready ? 0xcc44ff : 0x555555, 1); g.fillCircle(cx, bodyY, 11);
+    g.fillStyle(ready ? 0x8822bb : 0x3a3a3a, 1); g.fillRect(neckX, neckY, 7, 11);
+    g.fillStyle(ready ? 0xbb8844 : 0x444444, 1); g.fillRect(neckX + 0.5, neckY - 5, 6, 6);
+    if (ready) { g.fillStyle(0xffffff, 0.32); g.fillCircle(cx - 4, bodyY - 4, 3); }
+    if (!ready) this.potionCdText.setPosition(cx, y + h - 3).setText(Math.ceil(this.player.potionCd) + 's').setVisible(true);
+    else        this.potionCdText.setVisible(false);
+  }
+
+  drawMinimap(g) {
+    const mm = this.minimapRect(), scale = MINIMAP_SIZE / Math.max(MAP_W, MAP_H);
+    g.fillStyle(0x000000, 0.65); g.fillRect(mm.x, mm.y, MINIMAP_SIZE, MINIMAP_SIZE);
+    g.lineStyle(1, 0x555555, 1); g.strokeRect(mm.x, mm.y, MINIMAP_SIZE, MINIMAP_SIZE);
+    g.fillStyle(0x2a6a2a, 1);
+    for (const t of this.trees) {
+      const ts = TREE_SIZE * scale;
+      g.fillRect(mm.x + t.x * scale - ts / 2, mm.y + t.y * scale - ts / 2, ts, ts);
+    }
+    g.fillStyle(0xeeeeee, 1);
+    for (const e of this.enemies) g.fillRect(mm.x + e.x * scale - 2, mm.y + e.y * scale - 2, 4, 4);
+    g.fillStyle(0xffe060, 1);
+    for (const n of this.npcs) g.fillRect(mm.x + n.x * scale - 2, mm.y + n.y * scale - 2, 4, 4);
+    g.fillStyle(0x44aaff, 1);
+    g.fillRect(mm.x + this.player.x * scale - 2.5, mm.y + this.player.y * scale - 2.5, 5, 5);
+  }
+
+  // ── Phaser loop ────────────────────────────────────────────────────────
+
+  update(time, delta) {
+    const dt = Math.min(delta / 1000, 0.1);
+    if (!this.gameOver) this.updatePointerMovement();
+    if (!this.gameOver) this.updateGame(dt);
+    this.syncCamera();
+    this.renderWorld();
+    this.renderUI();
   }
 }
 
-function drawSwordIcon(cx, cy, color) {
-  ctx.strokeStyle = color;
-  ctx.lineCap = 'round';
-  ctx.lineWidth = 2.5;
-  ctx.beginPath(); ctx.moveTo(cx, cy - 14); ctx.lineTo(cx, cy + 6); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(cx - 8, cy + 4); ctx.lineTo(cx + 8, cy + 4); ctx.stroke();
-  ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(cx, cy + 6); ctx.lineTo(cx, cy + 14); ctx.stroke();
-}
-
-function drawBowIcon(cx, cy, color) {
-  ctx.strokeStyle = color;
-  ctx.lineCap = 'round';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(cx + 5, cy, 13, Math.PI * 0.58, Math.PI * 1.42, false);
-  ctx.stroke();
-  const sx = cx + 5 + 13 * Math.cos(Math.PI * 0.58);
-  const sy1 = cy + 13 * Math.sin(Math.PI * 0.58);
-  const sy2 = cy + 13 * Math.sin(Math.PI * 1.42);
-  ctx.beginPath(); ctx.moveTo(sx, sy1); ctx.lineTo(sx, sy2); ctx.stroke();
-  ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(cx - 11, cy); ctx.lineTo(cx + 7, cy); ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(cx + 7, cy); ctx.lineTo(cx + 3, cy - 3);
-  ctx.moveTo(cx + 7, cy); ctx.lineTo(cx + 3, cy + 3);
-  ctx.stroke();
-}
-
-function drawWeaponTile(x, y, type, cd, maxCd, selected) {
-  const w = WEAPON_SIZE, h = WEAPON_SIZE;
-  ctx.fillStyle = selected ? 'rgba(40,80,180,0.88)' : 'rgba(28,28,28,0.82)';
-  ctx.fillRect(x, y, w, h);
-  ctx.strokeStyle = selected ? '#88aaff' : '#444';
-  ctx.lineWidth = selected ? 2 : 1.5;
-  ctx.strokeRect(x, y, w, h);
-
-  const iconColor = cd > 0 ? '#555' : (selected ? '#ddf' : '#aaa');
-  if (type === 'sword') drawSwordIcon(x + w / 2, y + h / 2, iconColor);
-  else                  drawBowIcon(x + w / 2, y + h / 2, iconColor);
-
-  if (cd > 0) {
-    const frac = Math.min(cd / maxCd, 1);
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(x, y + h * (1 - frac), w, h * frac);
-    ctx.font = 'bold 11px monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'bottom';
-    ctx.fillStyle = '#888';
-    ctx.fillText(Math.ceil(cd) + 's', x + w / 2, y + h - 3);
-  }
-}
-
-function drawAttackButton() {
-  const r = attackBtnRect();
-  const hasSel = player.selectedEnemyId !== null && enemies.some(e => e.id === player.selectedEnemyId);
-  const onCd   = hasSel && player.weapon === 'bow' && player.bowCd > 0;
-  const active = hasSel && !onCd;
-
-  ctx.fillStyle = active ? 'rgba(180,40,40,0.90)' : 'rgba(28,28,28,0.82)';
-  ctx.fillRect(r.x, r.y, r.w, r.h);
-  ctx.strokeStyle = active ? '#f88' : '#444';
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(r.x, r.y, r.w, r.h);
-
-  ctx.font = 'bold 11px monospace';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = active ? '#fff' : (hasSel ? '#a66' : '#444');
-  ctx.fillText('ATTACK', r.x + r.w / 2, r.y + r.h / 2);
-}
-
-function drawNpcDialogue(npc) {
-  if (npc.talkTimer <= 0) return;
-  ctx.font = '12px monospace';
-  const tw  = ctx.measureText(npc.dialogue).width;
-  const pad = 8, bw = tw + pad * 2, bh = 22;
-  const bx  = npc.x - bw / 2;
-  const by  = npc.y - RADIUS - bh - 16;
-
-  ctx.fillStyle = 'rgba(240,238,215,0.93)';
-  ctx.fillRect(bx, by, bw, bh);
-  ctx.strokeStyle = '#999';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(bx, by, bw, bh);
-
-  // Tail pointing down to NPC
-  ctx.beginPath();
-  ctx.moveTo(npc.x - 5, by + bh);
-  ctx.lineTo(npc.x + 5, by + bh);
-  ctx.lineTo(npc.x, by + bh + 8);
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(240,238,215,0.93)';
-  ctx.fill();
-
-  ctx.fillStyle = '#222';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(npc.dialogue, npc.x, by + bh / 2);
-}
-
-function drawNpc(npc) {
-  circle(npc.x, npc.y, RADIUS, '#c8a020', '#ffe060', 2);
-  ctx.font = '11px monospace';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'bottom';
-  ctx.fillStyle = '#ffe090';
-  ctx.fillText(npc.name, npc.x, npc.y - RADIUS - 4);
-  drawNpcDialogue(npc);
-}
-
-function drawTalkButton() {
-  if (!isNearNpc()) return;
-  const r      = talkBtnRect();
-  const selNpc = npcs.find(n => n.id === player.selectedNpcId);
-  const inRange = selNpc && Math.hypot(player.x - selNpc.x, player.y - selNpc.y) <= TALK_RADIUS;
-  const talking = selNpc && selNpc.talkTimer > 0;
-  const active  = inRange && !talking;
-
-  ctx.fillStyle = active ? 'rgba(40,160,80,0.90)' : 'rgba(28,28,28,0.82)';
-  ctx.fillRect(r.x, r.y, r.w, r.h);
-  ctx.strokeStyle = active ? '#8f8' : '#444';
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(r.x, r.y, r.w, r.h);
-
-  ctx.font = 'bold 11px monospace';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = active ? '#fff' : (inRange ? '#686' : '#444');
-  ctx.fillText('TALK', r.x + r.w / 2, r.y + r.h / 2);
-}
-
-function drawWeapons() {
-  const wr = weaponRects();
-  drawWeaponTile(wr.sword.x, wr.sword.y, 'sword', player.attackCd, PLAYER_ATTACK_CD, player.weapon === 'sword');
-  drawWeaponTile(wr.bow.x,   wr.bow.y,   'bow',   player.bowCd,    BOW_CD,           player.weapon === 'bow');
-  drawAttackButton();
-  drawTalkButton();
-}
-
-function drawSelectedInfo() {
-  const cx = Math.floor(canvas.width / 2);
-
-  const enemy = enemies.find(e => e.id === player.selectedEnemyId);
-  if (enemy) {
-    const barW = 180, barH = 14, y = 8;
-    ctx.font = 'bold 13px monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    ctx.fillStyle = '#eee';
-    ctx.fillText(enemy.name, cx, y);
-
-    const barX = cx - barW / 2, barY = y + 20;
-    ctx.fillStyle = '#222';
-    ctx.fillRect(barX, barY, barW, barH);
-    const hpFrac = enemy.hp / enemy.maxHp;
-    ctx.fillStyle = `hsl(${Math.round(hpFrac * 110)}, 65%, 42%)`;
-    ctx.fillRect(barX, barY, barW * hpFrac, barH);
-    ctx.strokeStyle = '#555';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(barX, barY, barW, barH);
-    ctx.font = '10px monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#ddd';
-    ctx.fillText(`${enemy.hp} / ${enemy.maxHp}`, cx, barY + barH / 2);
-    return;
-  }
-
-  const npc = npcs.find(n => n.id === player.selectedNpcId);
-  if (npc) {
-    ctx.font = 'bold 13px monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    ctx.fillStyle = '#ffe090';
-    ctx.fillText(npc.name, cx, 8);
-  }
-}
-
-function drawMinimap() {
-  const mm = minimapRect();
-  const scale = MINIMAP_SIZE / Math.max(MAP_W, MAP_H);
-
-  ctx.fillStyle = 'rgba(0,0,0,0.65)';
-  ctx.fillRect(mm.x, mm.y, MINIMAP_SIZE, MINIMAP_SIZE);
-  ctx.strokeStyle = '#555';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(mm.x, mm.y, MINIMAP_SIZE, MINIMAP_SIZE);
-
-  ctx.fillStyle = '#1a4a1a';
-  for (const t of trees) {
-    const ts = TREE_SIZE * scale;
-    ctx.fillRect(mm.x + t.x * scale - ts / 2, mm.y + t.y * scale - ts / 2, ts, ts);
-  }
-
-  ctx.fillStyle = '#e44';
-  for (const e of enemies) {
-    ctx.fillRect(mm.x + e.x * scale - 2, mm.y + e.y * scale - 2, 4, 4);
-  }
-
-  ctx.fillStyle = '#ffe060';
-  for (const n of npcs) {
-    ctx.fillRect(mm.x + n.x * scale - 2, mm.y + n.y * scale - 2, 4, 4);
-  }
-
-  ctx.fillStyle = '#4af';
-  ctx.fillRect(mm.x + player.x * scale - 2.5, mm.y + player.y * scale - 2.5, 5, 5);
-}
-
-function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  // ── World space (camera locked to player) ──────────────────────────────
-  ctx.save();
-  ctx.translate(Math.round(canvas.width / 2 - player.x), Math.round(canvas.height / 2 - player.y));
-
-  // Map background + border
-  ctx.fillStyle = '#181818';
-  ctx.fillRect(0, 0, MAP_W, MAP_H);
-  ctx.strokeStyle = '#666';
-  ctx.lineWidth = 6;
-  ctx.strokeRect(0, 0, MAP_W, MAP_H);
-
-  // Trees
-  for (const t of trees) drawTree(t);
-
-  // Target indicator (shown while dragging)
-  circle(target.x, target.y, 5, 'rgba(255,255,255,0.11)', null);
-
-  // Attack range rings
-  for (const e of enemies) circle(e.x, e.y, ATTACK_RANGE, 'rgba(255,80,80,0.10)', 'rgba(255,100,100,0.35)', 1);
-  circle(player.x, player.y, ATTACK_RANGE, 'rgba(68,170,255,0.10)', 'rgba(68,170,255,0.35)', 1);
-
-  // Selection rings
-  const selEnemy = enemies.find(e => e.id === player.selectedEnemyId);
-  if (selEnemy) {
-    ctx.beginPath();
-    ctx.arc(selEnemy.x, selEnemy.y, RADIUS + 6, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-  }
-  const selNpc = npcs.find(n => n.id === player.selectedNpcId);
-  if (selNpc) {
-    ctx.beginPath();
-    ctx.arc(selNpc.x, selNpc.y, RADIUS + 6, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(255,220,80,0.85)';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-  }
-
-  // Arrows
-  ctx.strokeStyle = '#ffcc44';
-  ctx.lineWidth = 2;
-  ctx.lineCap = 'round';
-  for (const a of arrows) {
-    const mag = Math.hypot(a.vx, a.vy);
-    const len = 14;
-    ctx.beginPath();
-    ctx.moveTo(a.x - (a.vx / mag) * len, a.y - (a.vy / mag) * len);
-    ctx.lineTo(a.x, a.y);
-    ctx.stroke();
-  }
-
-  // NPCs
-  for (const n of npcs) drawNpc(n);
-
-  // Character models
-  for (const e of enemies) circle(e.x, e.y, RADIUS, '#c44', '#f88', 2);
-  circle(player.x, player.y, RADIUS, '#4af', '#8cf', 2);
-
-  // HP labels
-  for (const e of enemies) hpText(e.x, e.y, e.hp, e.maxHp);
-  hpText(player.x, player.y, player.hp, PLAYER_MAX_HP);
-
-  ctx.restore();
-  // ── Screen space UI ────────────────────────────────────────────────────
-
-  ctx.font = '13px monospace';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
-  ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  ctx.fillText(`Level ${player.level}   Damage ${player.damage}`, 10, 12);
-  ctx.fillStyle = 'rgba(255,255,255,0.55)';
-  ctx.fillText(`XP  ${player.xp} / 100`, 10, 30);
-
-  drawSelectedInfo();
-  drawMinimap();
-  drawWeapons();
-  drawPotion();
-
-  ctx.font = '11px monospace';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'bottom';
-  ctx.fillStyle = 'rgba(255,255,255,0.25)';
-  ctx.fillText(VERSION, 8, canvas.height - 8);
-
-  if (gameOver) {
-    ctx.fillStyle = 'rgba(0,0,0,0.72)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.font = 'bold 56px sans-serif';
-    ctx.fillStyle = '#f55';
-    ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2 - 24);
-    ctx.font = '18px sans-serif';
-    ctx.fillStyle = '#999';
-    ctx.fillText('Reload the page to play again', canvas.width / 2, canvas.height / 2 + 28);
-  }
-}
-
-function loop(timestamp) {
-  const dt = lastTime === null ? 0 : Math.min((timestamp - lastTime) / 1000, 0.1);
-  lastTime = timestamp;
-  update(dt);
-  draw();
-  requestAnimationFrame(loop);
-}
-
-requestAnimationFrame(loop);
+new Phaser.Game({
+  type: Phaser.AUTO,
+  parent: 'game-container',
+  backgroundColor: '#111111',
+  scene: GameScene,
+  scale: {
+    mode: Phaser.Scale.RESIZE,
+    autoCenter: Phaser.Scale.NO_CENTER,
+  },
+});
