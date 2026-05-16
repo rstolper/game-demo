@@ -1,4 +1,4 @@
-const VERSION = '2026-05-15 14:45';
+const VERSION = '2026-05-15 15:00';
 
 const RADIUS           = 18;
 const ATTACK_RANGE     = RADIUS * 2.5;
@@ -66,7 +66,7 @@ class GameScene extends Phaser.Scene {
     this.load.spritesheet('skeleton',       'assets/Enemies/Skeleton.png',         { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
     this.load.image('grass',   'assets/Tiles/Grass_Middle.png');
     this.load.image('water',   'assets/Tiles/Water_Middle.png');
-    this.load.image('beach',   'assets/Tiles/Beach_Tile.png');
+    this.load.image('sand',    'assets/Tiles/Path_Middle.png');
     this.load.image('farmland','assets/Tiles/FarmLand_Tile.png');
     this.load.image('tree',    'assets/Outdoor decoration/Oak_Tree.png');
   }
@@ -101,7 +101,7 @@ class GameScene extends Phaser.Scene {
 
     // Terrain zones
     this.add.tileSprite(FARM_ZONE.x,  FARM_ZONE.y,  FARM_ZONE.w,  FARM_ZONE.h,  'farmland').setOrigin(0, 0).setDepth(1);
-    this.add.tileSprite(BEACH_ZONE.x, BEACH_ZONE.y, BEACH_ZONE.w, BEACH_ZONE.h, 'beach'   ).setOrigin(0, 0).setDepth(2);
+    this.add.tileSprite(BEACH_ZONE.x, BEACH_ZONE.y, BEACH_ZONE.w, BEACH_ZONE.h, 'sand'    ).setOrigin(0, 0).setDepth(2);
     this.add.tileSprite(LAKE_ZONE.x,  LAKE_ZONE.y,  LAKE_ZONE.w,  LAKE_ZONE.h,  'water'   ).setOrigin(0, 0).setDepth(3);
 
     // worldGfx: overlays only (rings, arrows, border) — depth above ground, below sprites
