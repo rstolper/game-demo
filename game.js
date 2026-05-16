@@ -1,4 +1,4 @@
-const VERSION = '2026-05-15 14:00';
+const VERSION = '2026-05-15 14:30';
 
 const RADIUS           = 18;
 const ATTACK_RANGE     = RADIUS * 2.5;
@@ -77,6 +77,7 @@ class GameScene extends Phaser.Scene {
     this.pDownPos  = null;   // screen pos of pointer-down
     this.pDownTime = 0;
     this.pMoved    = false;  // true once pointer drifts past tap threshold
+    this.pOnEntity = false;  // true when the click landed on an enemy or NPC
 
     this.player = {
       x: MAP_W / 2, y: MAP_H / 2,
@@ -358,6 +359,9 @@ class GameScene extends Phaser.Scene {
     this.pDownPos  = { x: pointer.x, y: pointer.y };
     this.pDownTime = this.time.now;
     this.pMoved    = false;
+    const wp = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+    this.pOnEntity = this.enemies.some(e => Math.hypot(wp.x - e.x, wp.y - e.y) <= RADIUS * 3)
+                  || this.npcs.some(n  => Math.hypot(wp.x - n.x,  wp.y - n.y)  <= RADIUS * 3);
   }
 
   onPointerMove(pointer) {
@@ -370,8 +374,9 @@ class GameScene extends Phaser.Scene {
   onPointerUp(pointer) {
     if (this.gameOver) return;
     if (!this.pMoved && this.pDownPos) this.handleTap(this.pDownPos.x, this.pDownPos.y);
-    this.pDownPos = null;
-    this.pMoved   = false;
+    this.pDownPos  = null;
+    this.pMoved    = false;
+    this.pOnEntity = false;
   }
 
   isPointerOverUI(px, py) {
@@ -388,6 +393,7 @@ class GameScene extends Phaser.Scene {
   updatePointerMovement() {
     const pointer = this.input.activePointer;
     if (!pointer.isDown || !this.pDownPos) return;
+    if (this.pOnEntity) return;
     if (this.isPointerOverUI(pointer.x, pointer.y)) return;
     if (!this.pMoved && Math.hypot(pointer.x - this.pDownPos.x, pointer.y - this.pDownPos.y) > (pointer.wasTouch ? 12 : 4)) {
       this.pMoved = true;
@@ -491,7 +497,7 @@ class GameScene extends Phaser.Scene {
     const wp = this.cameras.main.getWorldPoint(sx, sy);
 
     for (const enemy of this.enemies) {
-      if (Math.hypot(wp.x - enemy.x, wp.y - enemy.y) <= RADIUS * 1.5) {
+      if (Math.hypot(wp.x - enemy.x, wp.y - enemy.y) <= RADIUS * 3) {
         this.player.selectedEnemyId = enemy.id;
         this.player.selectedNpcId   = null;
         this.player.attackTarget    = null;
@@ -499,7 +505,7 @@ class GameScene extends Phaser.Scene {
       }
     }
     for (const npc of this.npcs) {
-      if (Math.hypot(wp.x - npc.x, wp.y - npc.y) <= RADIUS * 1.5) {
+      if (Math.hypot(wp.x - npc.x, wp.y - npc.y) <= RADIUS * 3) {
         this.player.selectedNpcId   = npc.id;
         this.player.selectedEnemyId = null;
         this.player.attackTarget    = null;
