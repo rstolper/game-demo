@@ -1,4 +1,4 @@
-const VERSION = '2026-05-15 14:30';
+const VERSION = '2026-05-15 14:45';
 
 const RADIUS           = 18;
 const ATTACK_RANGE     = RADIUS * 2.5;
@@ -374,6 +374,8 @@ class GameScene extends Phaser.Scene {
   onPointerUp(pointer) {
     if (this.gameOver) return;
     if (!this.pMoved && this.pDownPos) this.handleTap(this.pDownPos.x, this.pDownPos.y);
+    // Stop moving when pointer is released
+    this.target    = { x: this.player.x, y: this.player.y };
     this.pDownPos  = null;
     this.pMoved    = false;
     this.pOnEntity = false;
