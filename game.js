@@ -319,7 +319,7 @@ class GameScene extends Phaser.Scene {
       id: this.nextId++, x, y, spawnX: x, spawnY: y, state: 'idle',
       name: 'Little Weirdo', facing: 'down',
       hp: ENEMY_MAX_HP, maxHp: ENEMY_MAX_HP,
-      attackCd: 0, thrustTimer: 0, regenTick: ENEMY_REGEN_INTERVAL, combatDelay: 0,
+      attackCd: 0, thrustTimer: 0, thrustHitPending: false, regenTick: ENEMY_REGEN_INTERVAL, combatDelay: 0,
       dying: false, deathTimer: 0, aggressive: false,
       wanderTimer: WANDER_INTERVAL_MIN + Math.random() * (WANDER_INTERVAL_MAX - WANDER_INTERVAL_MIN),
       wanderTarget: null, wanderTimeLeft: 0,
@@ -764,6 +764,22 @@ class GameScene extends Phaser.Scene {
       e.attackCd    = Math.max(0, e.attackCd    - dt);
       e.thrustTimer = Math.max(0, e.thrustTimer - dt);
       if (e.dying) e.deathTimer = Math.max(0, e.deathTimer - dt);
+      // Fire damage right after frame 5: thrustTimer counts down from 0.8;
+      // frame 6 starts when 0.2s remain
+      const HIT_THRESHOLD = (LPC_THRUST_FRAMES.length - 6) / 10;
+      if (e.thrustHitPending && e.thrustTimer <= HIT_THRESHOLD) {
+        e.thrustHitPending = false;
+        const dhit = Math.hypot(player.x - e.x, player.y - e.y);
+        if (dhit <= ATTACK_RANGE + RADIUS && this.isFacingTarget(e.facing, player.x - e.x, player.y - e.y)) {
+          player.hp = Math.max(0, player.hp - ENEMY_ATTACK);
+          this.spawnDamageNumber(player.x, player.y, ENEMY_ATTACK, '#ff5555');
+          if (player.hp === 0) { this.onGameOver(); return; }
+          if (player.selectedEnemyId === null) player.selectedEnemyId = e.id;
+          player.attackTarget    = player.selectedEnemyId;
+          player.attackMode      = true;
+          player.attackModeTimer = 0;
+        }
+      }
     }
 
     this.arrows = this.arrows.filter(a => {
@@ -794,18 +810,9 @@ class GameScene extends Phaser.Scene {
       // Enemy only attacks when player is within their 180° forward arc
       if (!this.isFacingTarget(enemy.facing, player.x - enemy.x, player.y - enemy.y)) continue;
       if (enemy.attackCd <= 0) {
-        enemy.attackCd    = ENEMY_ATTACK_CD;
-        enemy.thrustTimer = LPC_THRUST_FRAMES.length / 10;
-        player.hp = Math.max(0, player.hp - ENEMY_ATTACK);
-        this.spawnDamageNumber(player.x, player.y, ENEMY_ATTACK, '#ff5555');
-        if (player.hp === 0) { this.onGameOver(); return; }
-        // Hitting the player engages attack mode; only steal selection if none exists
-        if (player.selectedEnemyId === null) {
-          player.selectedEnemyId = enemy.id;
-        }
-        player.attackTarget    = player.selectedEnemyId;
-        player.attackMode      = true;
-        player.attackModeTimer = 0;
+        enemy.attackCd        = ENEMY_ATTACK_CD;
+        enemy.thrustTimer     = LPC_THRUST_FRAMES.length / 10;
+        enemy.thrustHitPending = true;
       }
     }
 
@@ -996,6 +1003,15 @@ class GameScene extends Phaser.Scene {
       } else {
         const enemyMoving = enemy.state === 'chasing' || enemy.state === 'returning' || enemy.state === 'wandering';
         this.updateEntityAnim(t.sprite, 'weirdo', enemy.facing, enemyMoving);
+      }
+      if (enemy.aggressive && !enemy.dying) {
+        const bw = 32, bh = 4;
+        const bx = enemy.x - bw / 2, by = enemy.y - SPRITE_H - 6;
+        const frac = enemy.hp / enemy.maxHp;
+        const col = frac > 0.5 ? 0x44cc44 : frac > 0.25 ? 0xddaa00 : 0xcc2222;
+        g.fillStyle(0x111111, 0.8); g.fillRect(bx, by, bw, bh);
+        if (frac > 0) { g.fillStyle(col, 1); g.fillRect(bx, by, bw * frac, bh); }
+        g.lineStyle(1, 0x000000, 0.6); g.strokeRect(bx, by, bw, bh);
       }
     }
 
