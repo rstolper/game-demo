@@ -1,12 +1,13 @@
-const VERSION = '2026-05-15 15:00';
+const VERSION = '2026-05-19 11:30';
 
 const RADIUS           = 18;
-const ATTACK_RANGE     = RADIUS * 2.5;
+const ATTACK_RANGE     = RADIUS * 4;
 const SPEED            = 300;
 const ENEMY_SPEED      = 120;
 const SPAWN_LEASH      = 700;
-const MAP_W            = 3000;
-const MAP_H            = 3000;
+const AGGRO_RADIUS     = ATTACK_RANGE * 5; // range at which aggressive enemies re-engage
+const MAP_W            = 3008;
+const MAP_H            = 3008;
 const PLAYER_MAX_HP    = 100;
 const PLAYER_ATTACK    = 5;
 const PLAYER_ATTACK_CD = 1.0;
@@ -19,10 +20,10 @@ const ENEMY_ATTACK_CD      = 1.0;
 const ENEMY_REGEN_INTERVAL = 0.5;
 const ENEMY_SPAWN_MIN_DIST = 200;
 const REGEN_COMBAT_DELAY   = 3.0;
+const ATTACK_MODE_GRACE    = 3.0; // seconds to re-select before attack mode turns off
 const REGEN_INTERVAL       = 0.3;
-const TREE_SIZE     = 48;
-const TREE_COUNT    = 70;
-const TREE_MIN_DIST = 200;
+const TREE_TILE_SIZE = 32; // collision rect size for trunk tiles
+const TRUNK_TILE_IDS = new Set([441, 442, 443, 473, 474, 475, 569, 570, 571, 1023]);
 const MINIMAP_SIZE   = 130;
 const MINIMAP_MARGIN = 10;
 const BOW_RANGE   = 900;
@@ -34,41 +35,45 @@ const ATTACK_BTN_H  = 28;
 const TALK_BTN_H    = 28;
 const TALK_RADIUS   = 150;
 const TALK_DURATION = 10.0;
+const WANDER_RADIUS       = 180;
+const WANDER_INTERVAL_MIN = 3;
+const WANDER_INTERVAL_MAX = 8;
+const WANDER_SPEED_MULT   = 0.45; // fraction of ENEMY_SPEED used while wandering
+const WANDER_TIMEOUT      = 5.0;  // give up wander if target not reached in this many seconds
 
-// Terrain zones — rectangular areas placed on the map
-const LAKE_ZONE  = { x: 1900, y: 400,  w: 600, h: 400 }; // northeast lake
-const BEACH_ZONE = { x: 1848, y: 348,  w: 704, h: 504 }; // sand border around lake
-const FARM_ZONE  = { x: 300,  y: 2100, w: 750, h: 500 }; // southwest farmland
+// LPC character sheets — 64×64 per frame
+// Standard sheets (13 cols): PlayerLPC, PlayerDaggerLPC, LittleWeirdoLPC, JimmyLPC
+// Bow sheet (18 cols): PlayerBowLPC
+const SPRITE_W = 64;
+const SPRITE_H = 64;
+const LPC_COLS_STD = 13;
+const LPC_COLS_BOW = 18;
 
-// Sprite sheet layout: Player.png and Skeleton.png are both 192×320, 32×32 per frame (6 cols × 10 rows)
-// Player.png / Skeleton.png — 192×320, 32×32 per frame (6 cols × 10 rows)
-// Row 0: walk down  (frames  0-5)
-// Row 1: walk right (frames  6-11)
-// Row 2: walk up    (frames 12-17)
-// Left = right mirrored (flipX)
-
-// Player_Actions.png — 96×576, 48×48 per frame (2 cols × 12 rows)
-// Row 2 (frames 4-5):  sword swing, facing right
-// Row 3 (frames 6-7):  sword swing, facing down (toward camera)
-// Row 4 (frames 8-9):  sword swing, facing up   (away from camera)
-const SPRITE_W = 32;
-const SPRITE_H = 32;
-// Row 0=down, Row 1=right, Row 2=up. No separate left row — left is right flipped horizontally.
-const WALK_FRAMES = { down: 0, right: 6, up: 12 };
-const IDLE_FRAME  = { down: 1, right: 7, up: 13 };
+// Tweak these if animations look wrong.
+// Row = 0-indexed row in the spritesheet for each facing direction.
+// Frames = frame indices within that row (from the generator's preview, e.g. [0,1,2,3,4,5]).
+const LPC_WALK_ROWS   = { up: 8,  left: 9,  down: 10, right: 11 };
+const LPC_THRUST_ROWS = { up: 4,  left: 5,  down: 6,  right: 7  };
+const LPC_SLASH_ROWS  = { up: 12, left: 13, down: 14, right: 15 };
+const LPC_SHOOT_ROWS  = { up: 16, left: 17, down: 18, right: 19 };
+const LPC_WALK_FRAMES   = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+const LPC_THRUST_FRAMES = [0, 1, 2, 3, 4, 5, 6, 7];
+const LPC_SLASH_FRAMES  = [0, 1, 2, 3, 4, 5];
+const LPC_SHOOT_FRAMES  = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+const LPC_HURT_ROW      = 20;
+const LPC_HURT_FRAMES   = [0, 1, 2, 3, 4, 5];
 
 class GameScene extends Phaser.Scene {
   constructor() { super('GameScene'); }
 
   preload() {
-    this.load.spritesheet('player',         'assets/Player/Player.png',            { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
-    this.load.spritesheet('player-actions', 'assets/Player/Player_Actions.png',    { frameWidth: 48, frameHeight: 48 });
-    this.load.spritesheet('skeleton',       'assets/Enemies/Skeleton.png',         { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
-    this.load.image('grass',   'assets/Tiles/Grass_Middle.png');
-    this.load.image('water',   'assets/Tiles/Water_Middle.png');
-    this.load.image('sand',    'assets/Tiles/Path_Middle.png');
-    this.load.image('farmland','assets/Tiles/FarmLand_Tile.png');
-    this.load.image('tree',    'assets/Outdoor decoration/Oak_Tree.png');
+    this.load.tilemapTiledJSON('map', 'map1.json');
+    this.load.image('terrain_atlas', 'assets/Tiles/terrain_atlas.png');
+    this.load.spritesheet('player-base',   'assets/Player/PlayerLPC.png',         { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
+    this.load.spritesheet('player-dagger', 'assets/Player/PlayerDaggerLPC.png',   { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
+    this.load.spritesheet('player-bow',    'assets/Player/PlayerBowLPC.png',      { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
+    this.load.spritesheet('weirdo',        'assets/Enemies/LittleWeirdoLPC.png',  { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
+    this.load.spritesheet('jimmy',         'assets/NPCs/JimmyLPC.png',            { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
   }
 
   create() {
@@ -86,7 +91,8 @@ class GameScene extends Phaser.Scene {
       level: 1, xp: 0, damage: PLAYER_ATTACK,
       potionCd: 0, weapon: 'sword', bowCd: 0,
       selectedEnemyId: null, selectedNpcId: null, attackTarget: null,
-      facing: 'down', swingTimer: 0,
+      facing: 'down', swingTimer: 0, swingDamageTimer: 0, bowShootTimer: 0,
+      attackMode: false, attackModeTimer: 0,
     };
     this.target  = { x: this.player.x, y: this.player.y };
     this.enemies = [];
@@ -96,53 +102,55 @@ class GameScene extends Phaser.Scene {
 
     this.createAnimations();
 
-    // Ground — tiled grass across the whole map
-    this.add.tileSprite(0, 0, MAP_W, MAP_H, 'grass').setOrigin(0, 0).setDepth(0);
+    // Tiled map — Land layer at depth 0, Trees layer above all sprites (depth > MAP_H)
+    const map     = this.make.tilemap({ key: 'map' });
+    const tileset = map.addTilesetImage('terrain_atlas', 'terrain_atlas');
+    map.createLayer('Land',  tileset, 0, 0).setDepth(0);
+    // Canopy layer — full Trees data, trunk tiles hidden so they don't double-render
+    const treesHigh = map.createLayer('Trees', tileset, 0, 0).setDepth(3100);
+    treesHigh.forEachTile(t => { if (t.index !== -1 && TRUNK_TILE_IDS.has(t.index)) t.alpha = 0; });
+    // Trunk layer — blank layer at low depth, populated only with trunk tiles so sprites render on top
+    const treesLow = map.createBlankLayer('TrunksLow', tileset, 0, 0, map.width, map.height).setDepth(1);
+    map.getLayer('Trees').data.forEach((row, r) =>
+      row.forEach((tile, c) => {
+        if (tile && tile.index !== -1 && TRUNK_TILE_IDS.has(tile.index)) treesLow.putTileAt(tile.index, c, r);
+      })
+    );
 
-    // Terrain zones
-    this.add.tileSprite(FARM_ZONE.x,  FARM_ZONE.y,  FARM_ZONE.w,  FARM_ZONE.h,  'farmland').setOrigin(0, 0).setDepth(1);
-    this.add.tileSprite(BEACH_ZONE.x, BEACH_ZONE.y, BEACH_ZONE.w, BEACH_ZONE.h, 'sand'    ).setOrigin(0, 0).setDepth(2);
-    this.add.tileSprite(LAKE_ZONE.x,  LAKE_ZONE.y,  LAKE_ZONE.w,  LAKE_ZONE.h,  'water'   ).setOrigin(0, 0).setDepth(3);
+    // Derive tree collision rects from trunk tile IDs in the Trees layer
+    this.initTreesFromMap(map);
 
-    // worldGfx: overlays only (rings, arrows, border) — depth above ground, below sprites
-    this.worldGfx = this.add.graphics().setDepth(50);
-    // uiGfx: screen-space HUD
-    this.uiGfx = this.add.graphics().setScrollFactor(0).setDepth(200);
+    // worldGfx: overlays (rings, arrows, border) — above tree canopy so selection rings stay visible
+    this.worldGfx = this.add.graphics().setDepth(3150);
+    // uiGfx: screen-space HUD — above everything
+    this.uiGfx = this.add.graphics().setScrollFactor(0).setDepth(5000);
 
-    // World-space text (above sprites)
-    this.playerHpText = this.add.text(0, 0, '', {
-      fontFamily: 'monospace', fontSize: '11px', color: '#dddddd',
-    }).setOrigin(0.5, 1).setDepth(120);
+    this.floatingNums = []; // active floating damage numbers
 
     this.enemyTextMap = new Map(); // id -> { hp: Text, sprite: Sprite }
     this.npcTextMap   = new Map(); // id -> { name: Text, dialogue: Text, sprite: Sprite }
 
-    this.initTrees();
     this.initEnemies();
     this.initNpcs();
 
-    // Player sprite (created after init so depth sorts correctly from the start)
-    this.playerSprite = this.add.sprite(this.player.x, this.player.y, 'player')
-      .setDepth(this.player.y)
-      .setScale(1.5);
-    this.playerSprite.play('player-idle-down');
-
-    // Action sprite overlaid on player for sword-swing animation
-    // Scale 1.5 matches the walk sprite (32×1.5=48px), action frames are 48px so 48×1.5=72px displayed
-    this.playerActionSprite = this.add.sprite(this.player.x, this.player.y, 'player-actions')
-      .setDepth(this.player.y)
-      .setScale(1.5)
-      .setVisible(false);
+    // Player — one sprite per weapon sheet; renderWorld shows only the active one
+    const px = this.player.x, py = this.player.y;
+    this.playerBaseSprite   = this.add.sprite(px, py, 'player-base').setOrigin(0.5, 1).setDepth(py).setVisible(false);
+    this.playerDaggerSprite = this.add.sprite(px, py, 'player-dagger').setOrigin(0.5, 1).setDepth(py);
+    this.playerBowSprite    = this.add.sprite(px, py, 'player-bow').setOrigin(0.5, 1).setDepth(py).setVisible(false);
+    this.playerDaggerSprite.play('player-dagger-idle-down');
 
     // Screen-space UI text
     const mono = (sz, col, bold) => ({ fontFamily: 'monospace', fontSize: sz, color: col, fontStyle: bold ? 'bold' : 'normal' });
-    const ui   = (obj) => obj.setScrollFactor(0).setDepth(200);
+    const ui   = (obj) => obj.setScrollFactor(0).setDepth(5000);
     const W = this.W, H = this.H;
 
-    this.levelText      = ui(this.add.text(10, 12, '', mono('13px', '#ffffff'))).setAlpha(0.85);
-    this.xpText         = ui(this.add.text(10, 30, '', mono('13px', '#ffffff'))).setAlpha(0.55);
+    this.levelText  = ui(this.add.text(16, 15, '', mono('14px', '#ffffff', true)));
+    this.hpText     = ui(this.add.text(0,  0,  '', { ...mono('10px', '#ffffff'), stroke: '#000000', strokeThickness: 3 })).setOrigin(0.5, 0.5);
+    this.xpText     = ui(this.add.text(0,  0,  '', { ...mono('10px', '#ffffff'), stroke: '#000000', strokeThickness: 3 })).setOrigin(0.5, 0.5);
+    this.damageText = ui(this.add.text(16, 73, '', mono('11px', '#888888')));
     this.selNameText    = ui(this.add.text(W / 2, 8, '', mono('13px', '#eeeeee', true))).setOrigin(0.5, 0).setVisible(false);
-    this.selHpText      = ui(this.add.text(W / 2, 35, '', mono('10px', '#dddddd'))).setOrigin(0.5, 0.5).setVisible(false);
+    this.selHpText      = ui(this.add.text(W / 2, 35, '', { ...mono('10px', '#ffffff'), stroke: '#000000', strokeThickness: 3 })).setOrigin(0.5, 0.5).setVisible(false);
     this.versionText    = ui(this.add.text(8, H - 8, VERSION, mono('11px', '#ffffff'))).setAlpha(0.25).setOrigin(0, 1);
     this.attackBtnText  = ui(this.add.text(0, 0, 'ATTACK', mono('11px', '#ffffff', true))).setOrigin(0.5, 0.5);
     this.talkBtnText    = ui(this.add.text(0, 0, 'TALK',   mono('11px', '#ffffff', true))).setOrigin(0.5, 0.5).setVisible(false);
@@ -152,10 +160,10 @@ class GameScene extends Phaser.Scene {
 
     this.gameOverText = ui(this.add.text(W / 2, H / 2 - 24, 'Game Over', {
       fontFamily: 'sans-serif', fontSize: '56px', color: '#ff5555', fontStyle: 'bold',
-    })).setOrigin(0.5, 0.5).setDepth(300).setVisible(false);
+    })).setOrigin(0.5, 0.5).setDepth(6000).setVisible(false);
     this.gameOverSubText = ui(this.add.text(W / 2, H / 2 + 28, 'Reload the page to play again', {
       fontFamily: 'sans-serif', fontSize: '18px', color: '#999999',
-    })).setOrigin(0.5, 0.5).setDepth(300).setVisible(false);
+    })).setOrigin(0.5, 0.5).setDepth(6000).setVisible(false);
 
     // Input
     this.input.on('pointerdown', this.onPointerDown, this);
@@ -175,33 +183,73 @@ class GameScene extends Phaser.Scene {
   }
 
   createAnimations() {
-    // Walk/idle: 3 directional rows; left reuses right with flipX
-    const dirs = [['down', 0], ['right', 6], ['up', 12]];
+    const DIRS = ['up', 'left', 'down', 'right'];
 
-    for (const [sheet] of [['player'], ['skeleton']]) {
-      for (const [dir, start] of dirs) {
+    const toFrames = (sheet, rowStart, indices) =>
+      indices.map(i => ({ key: sheet, frame: rowStart + i }));
+
+    // Standard 13-col sheets: walk + idle in all 4 directions
+    for (const sheet of ['player-base', 'player-dagger', 'weirdo', 'jimmy']) {
+      for (const dir of DIRS) {
+        const rowStart = LPC_WALK_ROWS[dir] * LPC_COLS_STD;
         this.anims.create({
           key: `${sheet}-walk-${dir}`,
-          frames: this.anims.generateFrameNumbers(sheet, { start, end: start + 5 }),
-          frameRate: 8,
-          repeat: -1,
+          frames: toFrames(sheet, rowStart, LPC_WALK_FRAMES),
+          frameRate: 8, repeat: -1,
         });
         this.anims.create({
           key: `${sheet}-idle-${dir}`,
-          frames: [{ key: sheet, frame: start + 1 }],
+          frames: [{ key: sheet, frame: rowStart }],
           frameRate: 1,
         });
       }
     }
 
-    // Sword swing (Player_Actions.png, 48×48, 2 cols × 12 rows)
-    // Row 3 = right, Row 4 = down, Row 5 = up  (left mirrors right via flipX)
-    for (const [dir, row] of [['right', 3], ['down', 4], ['up', 5]]) {
+    // Weirdo hurt/death (single row, no direction)
+    this.anims.create({
+      key: 'weirdo-hurt',
+      frames: toFrames('weirdo', LPC_HURT_ROW * LPC_COLS_STD, LPC_HURT_FRAMES),
+      frameRate: 10, repeat: 0,
+    });
+
+    // Weirdo thrust attack
+    for (const dir of DIRS) {
+      const rowStart = LPC_THRUST_ROWS[dir] * LPC_COLS_STD;
       this.anims.create({
-        key: `player-sword-${dir}`,
-        frames: this.anims.generateFrameNumbers('player-actions', { start: row * 2, end: row * 2 + 1 }),
-        frameRate: 10,
-        repeat: 0,
+        key: `weirdo-thrust-${dir}`,
+        frames: toFrames('weirdo', rowStart, LPC_THRUST_FRAMES),
+        frameRate: 10, repeat: 0,
+      });
+    }
+
+    // Dagger slash
+    for (const dir of DIRS) {
+      const rowStart = LPC_SLASH_ROWS[dir] * LPC_COLS_STD;
+      this.anims.create({
+        key: `player-dagger-slash-${dir}`,
+        frames: toFrames('player-dagger', rowStart, LPC_SLASH_FRAMES),
+        frameRate: 10, repeat: 0,
+      });
+    }
+
+    // Bow sheet (18 cols): walk + idle + shoot
+    for (const dir of DIRS) {
+      const walkRowStart  = LPC_WALK_ROWS[dir]  * LPC_COLS_BOW;
+      const shootRowStart = LPC_SHOOT_ROWS[dir] * LPC_COLS_BOW;
+      this.anims.create({
+        key: `player-bow-walk-${dir}`,
+        frames: toFrames('player-bow', walkRowStart, LPC_WALK_FRAMES),
+        frameRate: 8, repeat: -1,
+      });
+      this.anims.create({
+        key: `player-bow-idle-${dir}`,
+        frames: [{ key: 'player-bow', frame: walkRowStart }],
+        frameRate: 1,
+      });
+      this.anims.create({
+        key: `player-bow-shoot-${dir}`,
+        frames: toFrames('player-bow', shootRowStart, LPC_SHOOT_FRAMES),
+        frameRate: 10, repeat: 0,
       });
     }
   }
@@ -216,34 +264,38 @@ class GameScene extends Phaser.Scene {
     return dy > 0 ? 'down' : 'up';
   }
 
+  // Returns true if a target at (dx, dy) relative to the attacker is within their 180° forward arc.
+  isFacingTarget(facing, dx, dy) {
+    switch (facing) {
+      case 'right': return dx > 0;
+      case 'left':  return dx < 0;
+      case 'down':  return dy > 0;
+      case 'up':    return dy < 0;
+    }
+    return false;
+  }
+
   playSpriteAnim(sprite, key) {
     if (!sprite.anims.currentAnim || sprite.anims.currentAnim.key !== key) sprite.play(key);
   }
 
   updateEntityAnim(sprite, sheet, facing, moving) {
-    const flipX  = facing === 'left';
-    const animDir = flipX ? 'right' : facing;
-    const key    = moving ? `${sheet}-walk-${animDir}` : `${sheet}-idle-${animDir}`;
+    const key = moving ? `${sheet}-walk-${facing}` : `${sheet}-idle-${facing}`;
     this.playSpriteAnim(sprite, key);
-    sprite.setFlipX(flipX);
+    sprite.setFlipX(false);
   }
 
   // ── Init ───────────────────────────────────────────────────────────────
 
-  initTrees() {
-    let attempts = 0;
-    while (this.trees.length < TREE_COUNT && attempts < 3000) {
-      attempts++;
-      const x = TREE_SIZE * 1.5 + Math.random() * (MAP_W - TREE_SIZE * 3);
-      const y = TREE_SIZE * 1.5 + Math.random() * (MAP_H - TREE_SIZE * 3);
-      if (Math.hypot(x - MAP_W / 2, y - MAP_H / 2) < TREE_MIN_DIST) continue;
-      if (this.inRect(x, y, BEACH_ZONE) || this.inRect(x, y, FARM_ZONE)) continue;
-      this.trees.push({ x, y });
-      // Sprite: anchor at trunk base (bottom-center of collision box), canopy extends up
-      this.add.image(x, y + TREE_SIZE / 2, 'tree')
-        .setOrigin(0.5, 1)
-        .setDepth(y + TREE_SIZE / 2)
-        .setScale(1.2);
+  initTreesFromMap(map) {
+    const layer = map.getLayer('Trees').data;
+    for (let row = 0; row < layer.length; row++) {
+      for (let col = 0; col < layer[row].length; col++) {
+        const tile = layer[row][col];
+        if (tile && TRUNK_TILE_IDS.has(tile.index)) {
+          this.trees.push({ x: col * 32 + 16, y: row * 32 + 16 });
+        }
+      }
     }
   }
 
@@ -265,21 +317,19 @@ class GameScene extends Phaser.Scene {
   addEnemy(x, y) {
     const enemy = {
       id: this.nextId++, x, y, spawnX: x, spawnY: y, state: 'idle',
-      name: 'Skeleton', facing: 'down',
+      name: 'Little Weirdo', facing: 'down',
       hp: ENEMY_MAX_HP, maxHp: ENEMY_MAX_HP,
-      attackCd: 0, regenTick: ENEMY_REGEN_INTERVAL, combatDelay: 0,
+      attackCd: 0, thrustTimer: 0, regenTick: ENEMY_REGEN_INTERVAL, combatDelay: 0,
+      dying: false, deathTimer: 0, aggressive: false,
+      wanderTimer: WANDER_INTERVAL_MIN + Math.random() * (WANDER_INTERVAL_MAX - WANDER_INTERVAL_MIN),
+      wanderTarget: null, wanderTimeLeft: 0,
     };
     this.enemies.push(enemy);
 
-    const sprite = this.add.sprite(x, y, 'skeleton').setDepth(y).setScale(1.5);
-    sprite.play('skeleton-idle-down');
+    const sprite = this.add.sprite(x, y, 'weirdo').setOrigin(0.5, 1).setDepth(y);
+    sprite.play('weirdo-idle-down');
 
-    this.enemyTextMap.set(enemy.id, {
-      sprite,
-      hp: this.add.text(0, 0, '', {
-        fontFamily: 'monospace', fontSize: '11px', color: '#dddddd',
-      }).setOrigin(0.5, 1).setDepth(120),
-    });
+    this.enemyTextMap.set(enemy.id, { sprite });
     return enemy;
   }
 
@@ -287,27 +337,31 @@ class GameScene extends Phaser.Scene {
     const npc = { id: this.nextId++, x, y, name, dialogue, talkTimer: 0 };
     this.npcs.push(npc);
 
-    // NPC uses player spritesheet tinted gold to distinguish from the player
-    const sprite = this.add.sprite(x, y, 'player').setDepth(y).setScale(1.5).setTint(0xffcc44);
-    sprite.play('player-idle-down');
+    const sprite = this.add.sprite(x, y, 'jimmy').setOrigin(0.5, 1).setDepth(y);
+    sprite.play('jimmy-idle-down');
 
     this.npcTextMap.set(npc.id, {
       sprite,
       name: this.add.text(x, y - RADIUS - 4, name, {
         fontFamily: 'monospace', fontSize: '11px', color: '#ffe090',
-      }).setOrigin(0.5, 1).setDepth(120),
+      }).setOrigin(0.5, 1).setDepth(3200),
       dialogue: this.add.text(x, y - RADIUS - 20, dialogue, {
         fontFamily: 'monospace', fontSize: '12px', color: '#222222',
         backgroundColor: '#f0eed7', padding: { x: 8, y: 4 },
-      }).setOrigin(0.5, 1).setDepth(121).setVisible(false),
+      }).setOrigin(0.5, 1).setDepth(3200).setVisible(false),
     });
     return npc;
+  }
+
+  startEnemyDeath(enemy) {
+    enemy.dying     = true;
+    enemy.deathTimer = LPC_HURT_FRAMES.length / 10;
+    enemy.state     = 'idle';
   }
 
   removeEnemy(enemy) {
     const t = this.enemyTextMap.get(enemy.id);
     if (t) {
-      t.hp.destroy();
       t.sprite.destroy();
       this.enemyTextMap.delete(enemy.id);
     }
@@ -346,7 +400,7 @@ class GameScene extends Phaser.Scene {
     for (const t of this.trees) {
       const push = this.resolveCircleRect(
         entity.x, entity.y,
-        t.x - TREE_SIZE / 2, t.y - TREE_SIZE / 2, TREE_SIZE, TREE_SIZE,
+        t.x - TREE_TILE_SIZE / 2, t.y - TREE_TILE_SIZE / 2, TREE_TILE_SIZE, TREE_TILE_SIZE,
       );
       if (push) { entity.x += push.px; entity.y += push.py; }
     }
@@ -442,6 +496,24 @@ class GameScene extends Phaser.Scene {
     return this.npcs.some(n => Math.hypot(this.player.x - n.x, this.player.y - n.y) <= TALK_RADIUS);
   }
 
+  nearestEnemyInAttackRange() {
+    let best = null, bestDist = Infinity;
+    for (const e of this.enemies) {
+      if (e.dying) continue;
+      const d = Math.hypot(this.player.x - e.x, this.player.y - e.y);
+      if (d < ATTACK_RANGE * 2 && d < bestDist) { best = e; bestDist = d; }
+    }
+    return best;
+  }
+
+  spawnDamageNumber(wx, wy, amount, color) {
+    const t = this.add.text(wx, wy - SPRITE_H / 2, `-${amount}`, {
+      fontFamily: 'monospace', fontSize: '13px', color,
+      stroke: '#000000', strokeThickness: 3,
+    }).setOrigin(0.5, 1).setDepth(3300);
+    this.floatingNums.push({ obj: t, vy: -60, timer: 0.9 });
+  }
+
   // ── Actions ────────────────────────────────────────────────────────────
 
   usePotion() {
@@ -454,7 +526,9 @@ class GameScene extends Phaser.Scene {
     const dx = enemy.x - this.player.x, dy = enemy.y - this.player.y;
     const dist = Math.hypot(dx, dy);
     if (dist > BOW_RANGE || this.player.bowCd > 0) return;
-    this.player.bowCd   = BOW_CD;
+    this.player.bowCd         = BOW_CD;
+    this.player.bowShootTimer = 0.6;
+    enemy.aggressive = true;
     enemy.state = 'chasing';
     this.arrows.push({
       x: this.player.x, y: this.player.y,
@@ -464,10 +538,19 @@ class GameScene extends Phaser.Scene {
   }
 
   executeAttack() {
-    const enemy = this.enemies.find(e => e.id === this.player.selectedEnemyId);
+    let enemy = this.enemies.find(e => e.id === this.player.selectedEnemyId);
+    if (!enemy) enemy = this.nearestEnemyInAttackRange();
     if (!enemy) return;
-    if (this.player.weapon === 'bow') this.shootArrow(enemy);
-    else this.player.attackTarget = enemy.id;
+    this.player.selectedEnemyId = enemy.id;
+    if (this.player.weapon === 'bow') {
+      this.shootArrow(enemy);
+    } else {
+      this.player.attackMode      = true;
+      this.player.attackModeTimer = 0;
+      this.player.attackTarget    = enemy.id;
+      // Immediately face the enemy so a nearby player can swing without walking
+      this.player.facing = this.getFacing(enemy.x - this.player.x, enemy.y - this.player.y);
+    }
   }
 
   executeTalk() {
@@ -493,7 +576,11 @@ class GameScene extends Phaser.Scene {
     if (this.inRect(sx, sy, wr.sword)) { this.player.weapon = 'sword'; return; }
     if (this.inRect(sx, sy, wr.bow))   { this.player.weapon = 'bow';   return; }
 
-    if (this.inRect(sx, sy, this.attackBtnRect())) { this.executeAttack(); return; }
+    if (this.inRect(sx, sy, this.attackBtnRect())) {
+      const hasSel  = this.player.selectedEnemyId !== null && this.enemies.some(e => e.id === this.player.selectedEnemyId);
+      if (hasSel || this.nearestEnemyInAttackRange()) { this.executeAttack(); return; }
+      return;
+    }
     if (this.isNearNpc() && this.inRect(sx, sy, this.talkBtnRect())) { this.executeTalk(); return; }
 
     const wp = this.cameras.main.getWorldPoint(sx, sy);
@@ -502,7 +589,14 @@ class GameScene extends Phaser.Scene {
       if (Math.hypot(wp.x - enemy.x, wp.y - enemy.y) <= RADIUS * 3) {
         this.player.selectedEnemyId = enemy.id;
         this.player.selectedNpcId   = null;
-        this.player.attackTarget    = null;
+        if (this.player.attackMode) {
+          // Re-selecting an enemy while in attack mode (or grace period) — retarget immediately
+          this.player.attackTarget    = enemy.id;
+          this.player.attackModeTimer = 0;
+          this.player.facing = this.getFacing(enemy.x - this.player.x, enemy.y - this.player.y);
+        } else {
+          this.player.attackTarget = null;
+        }
         return;
       }
     }
@@ -511,6 +605,7 @@ class GameScene extends Phaser.Scene {
         this.player.selectedNpcId   = npc.id;
         this.player.selectedEnemyId = null;
         this.player.attackTarget    = null;
+        if (this.player.attackMode) this.player.attackModeTimer = ATTACK_MODE_GRACE;
         return;
       }
     }
@@ -518,6 +613,7 @@ class GameScene extends Phaser.Scene {
     this.player.selectedEnemyId = null;
     this.player.selectedNpcId   = null;
     this.player.attackTarget    = null;
+    if (this.player.attackMode) this.player.attackModeTimer = ATTACK_MODE_GRACE;
   }
 
   // ── Game update ────────────────────────────────────────────────────────
@@ -554,7 +650,20 @@ class GameScene extends Phaser.Scene {
     player.y = Math.max(RADIUS, Math.min(MAP_H - RADIUS, player.y));
 
     for (const enemy of this.enemies) {
+      if (enemy.dying) continue;
       const prevX = enemy.x, prevY = enemy.y;
+
+      // Aggressive enemies re-engage when the player comes within AGGRO_RADIUS,
+      // but only if the player is still within the leash range of the enemy's spawn
+      if (enemy.aggressive && enemy.state !== 'chasing') {
+        const distToPlayer = Math.hypot(player.x - enemy.x, player.y - enemy.y);
+        const playerFromSpawn = Math.hypot(player.x - enemy.spawnX, player.y - enemy.spawnY);
+        if (distToPlayer <= AGGRO_RADIUS && playerFromSpawn <= SPAWN_LEASH) {
+          enemy.state = 'chasing';
+          enemy.wanderTarget = null;
+        }
+      }
+
       if (enemy.state === 'chasing') {
         const d = Math.hypot(player.x - enemy.x, player.y - enemy.y);
         const playerFromSpawn = Math.hypot(player.x - enemy.spawnX, player.y - enemy.spawnY);
@@ -565,16 +674,46 @@ class GameScene extends Phaser.Scene {
           enemy.x += (player.x - enemy.x) / d * step;
           enemy.y += (player.y - enemy.y) / d * step;
           this.applyTreeCollisions(enemy);
+        } else {
+          // In attack range — always face the player
+          enemy.facing = this.getFacing(player.x - enemy.x, player.y - enemy.y);
         }
       } else if (enemy.state === 'returning') {
         const rdx = enemy.spawnX - enemy.x, rdy = enemy.spawnY - enemy.y;
         const d = Math.hypot(rdx, rdy);
         if (d < 2) {
           enemy.x = enemy.spawnX; enemy.y = enemy.spawnY; enemy.state = 'idle';
+          enemy.wanderTimer = WANDER_INTERVAL_MIN + Math.random() * (WANDER_INTERVAL_MAX - WANDER_INTERVAL_MIN);
         } else {
           const step = Math.min(ENEMY_SPEED * dt, d);
           enemy.x += rdx / d * step;
           enemy.y += rdy / d * step;
+          this.applyTreeCollisions(enemy);
+        }
+      } else if (enemy.state === 'idle') {
+        enemy.wanderTimer -= dt;
+        if (enemy.wanderTimer <= 0) {
+          const angle = Math.random() * Math.PI * 2;
+          const dist  = Math.random() * WANDER_RADIUS;
+          enemy.wanderTarget = {
+            x: Math.max(RADIUS, Math.min(MAP_W - RADIUS, enemy.spawnX + Math.cos(angle) * dist)),
+            y: Math.max(RADIUS, Math.min(MAP_H - RADIUS, enemy.spawnY + Math.sin(angle) * dist)),
+          };
+          enemy.wanderTimeLeft = WANDER_TIMEOUT;
+          enemy.state = 'wandering';
+        }
+      } else if (enemy.state === 'wandering') {
+        enemy.wanderTimeLeft -= dt;
+        const wdx = enemy.wanderTarget.x - enemy.x, wdy = enemy.wanderTarget.y - enemy.y;
+        const wd  = Math.hypot(wdx, wdy);
+        if (wd < 4 || enemy.wanderTimeLeft <= 0) {
+          enemy.state = 'idle';
+          enemy.wanderTimer = WANDER_INTERVAL_MIN + Math.random() * (WANDER_INTERVAL_MAX - WANDER_INTERVAL_MIN);
+          enemy.wanderTarget = null;
+        } else {
+          const step = Math.min(ENEMY_SPEED * WANDER_SPEED_MULT * dt, wd);
+          enemy.x += (wdx / wd) * step;
+          enemy.y += (wdy / wd) * step;
           this.applyTreeCollisions(enemy);
         }
       }
@@ -582,21 +721,61 @@ class GameScene extends Phaser.Scene {
       if (Math.hypot(movedX, movedY) > 0.1) enemy.facing = this.getFacing(movedX, movedY);
     }
 
-    player.attackCd  = Math.max(0, player.attackCd  - dt);
-    player.potionCd  = Math.max(0, player.potionCd  - dt);
-    player.bowCd     = Math.max(0, player.bowCd     - dt);
-    player.swingTimer = Math.max(0, player.swingTimer - dt);
-    for (const e of this.enemies) e.attackCd = Math.max(0, e.attackCd - dt);
+    this.floatingNums = this.floatingNums.filter(f => {
+      f.timer -= dt;
+      if (f.timer <= 0) { f.obj.destroy(); return false; }
+      f.obj.y += f.vy * dt;
+      f.obj.setAlpha(Math.min(1, f.timer / 0.3));
+      return true;
+    });
 
-    const deadIds = new Set();
+    player.attackCd      = Math.max(0, player.attackCd      - dt);
+    player.potionCd      = Math.max(0, player.potionCd      - dt);
+    player.bowCd         = Math.max(0, player.bowCd         - dt);
+    player.swingTimer      = Math.max(0, player.swingTimer      - dt);
+    player.bowShootTimer   = Math.max(0, player.bowShootTimer   - dt);
+    if (player.attackModeTimer > 0) {
+      player.attackModeTimer = Math.max(0, player.attackModeTimer - dt);
+      if (player.attackModeTimer === 0) player.attackMode = false;
+    }
+    const prevDmgTimer     = player.swingDamageTimer;
+    player.swingDamageTimer = Math.max(0, player.swingDamageTimer - dt);
+    if (prevDmgTimer > 0 && player.swingDamageTimer === 0) {
+      const tgt = this.enemies.find(e => e.id === player.attackTarget);
+      if (tgt && !tgt.dying) {
+        const edx = tgt.x - player.x, edy = tgt.y - player.y;
+        if (Math.hypot(edx, edy) <= ATTACK_RANGE + RADIUS && this.isFacingTarget(player.facing, edx, edy)) {
+          tgt.aggressive = true;
+          tgt.facing = this.getFacing(-edx, -edy); // enemy turns to face player
+          tgt.hp = Math.max(0, tgt.hp - player.damage);
+          this.spawnDamageNumber(tgt.x, tgt.y, player.damage, '#ffdd44');
+          if (tgt.hp === 0) {
+            this.awardXp();
+            this.startEnemyDeath(tgt);
+            player.attackMode   = false;
+            player.attackTarget = null;
+          } else {
+            tgt.state = 'chasing';
+          }
+        }
+      }
+    }
+    for (const e of this.enemies) {
+      e.attackCd    = Math.max(0, e.attackCd    - dt);
+      e.thrustTimer = Math.max(0, e.thrustTimer - dt);
+      if (e.dying) e.deathTimer = Math.max(0, e.deathTimer - dt);
+    }
+
     this.arrows = this.arrows.filter(a => {
       a.x += a.vx * dt; a.y += a.vy * dt; a.lifetime -= dt;
       if (a.lifetime <= 0) return false;
       for (const enemy of this.enemies) {
-        if (enemy.hp <= 0) continue;
+        if (enemy.dying) continue;
         if (Math.hypot(a.x - enemy.x, a.y - enemy.y) <= RADIUS) {
+          enemy.aggressive = true;
           enemy.hp = Math.max(0, enemy.hp - player.damage);
-          if (enemy.hp === 0) { this.awardXp(); deadIds.add(enemy.id); }
+          this.spawnDamageNumber(enemy.x, enemy.y, player.damage, '#ffdd44');
+          if (enemy.hp === 0) { this.awardXp(); this.startEnemyDeath(enemy); }
           return false;
         }
       }
@@ -607,32 +786,45 @@ class GameScene extends Phaser.Scene {
     for (const e of this.enemies) e.inCombat = false;
 
     for (const enemy of this.enemies) {
+      if (enemy.dying) continue;
       if (Math.hypot(player.x - enemy.x, player.y - enemy.y) > ATTACK_RANGE + RADIUS) continue;
       anyInRange     = true;
       enemy.inCombat = true;
+      if (!enemy.aggressive) continue; // passive — never attack first
+      // Enemy only attacks when player is within their 180° forward arc
+      if (!this.isFacingTarget(enemy.facing, player.x - enemy.x, player.y - enemy.y)) continue;
       if (enemy.attackCd <= 0) {
-        enemy.attackCd = ENEMY_ATTACK_CD;
+        enemy.attackCd    = ENEMY_ATTACK_CD;
+        enemy.thrustTimer = LPC_THRUST_FRAMES.length / 10;
         player.hp = Math.max(0, player.hp - ENEMY_ATTACK);
+        this.spawnDamageNumber(player.x, player.y, ENEMY_ATTACK, '#ff5555');
         if (player.hp === 0) { this.onGameOver(); return; }
+        // Hitting the player engages attack mode; only steal selection if none exists
+        if (player.selectedEnemyId === null) {
+          player.selectedEnemyId = enemy.id;
+        }
+        player.attackTarget    = player.selectedEnemyId;
+        player.attackMode      = true;
+        player.attackModeTimer = 0;
       }
     }
 
-    if (player.weapon === 'sword' && player.attackCd <= 0 && anyInRange) {
-      player.attackCd   = PLAYER_ATTACK_CD;
-      player.swingTimer = 0.25;
-      for (const enemy of this.enemies) {
-        if (Math.hypot(player.x - enemy.x, player.y - enemy.y) <= ATTACK_RANGE + RADIUS) {
-          enemy.hp = Math.max(0, enemy.hp - player.damage);
-          if (enemy.hp === 0) { this.awardXp(); deadIds.add(enemy.id); }
-          else enemy.state = 'chasing';
+    if (player.weapon === 'sword' && player.attackMode && player.attackCd <= 0) {
+      const tgt = this.enemies.find(e => e.id === player.attackTarget);
+      if (tgt && !tgt.dying) {
+        const edx = tgt.x - player.x, edy = tgt.y - player.y;
+        if (Math.hypot(edx, edy) <= ATTACK_RANGE + RADIUS && this.isFacingTarget(player.facing, edx, edy)) {
+          player.attackCd         = PLAYER_ATTACK_CD;
+          player.swingTimer       = LPC_SLASH_FRAMES.length / 10;
+          player.swingDamageTimer = 4 / 10;
         }
       }
     }
 
-    for (const enemy of this.enemies) {
-      if (deadIds.has(enemy.id)) this.removeEnemy(enemy);
-    }
-    this.enemies = this.enemies.filter(e => !deadIds.has(e.id));
+    // Remove enemies whose death animation has finished
+    const toRemove = this.enemies.filter(e => e.dying && e.deathTimer <= 0);
+    for (const enemy of toRemove) this.removeEnemy(enemy);
+    this.enemies = this.enemies.filter(e => !(e.dying && e.deathTimer <= 0));
 
     if (player.selectedEnemyId !== null && !this.enemies.some(e => e.id === player.selectedEnemyId)) player.selectedEnemyId = null;
     if (player.attackTarget    !== null && !this.enemies.some(e => e.id === player.attackTarget))    player.attackTarget    = null;
@@ -687,9 +879,10 @@ class GameScene extends Phaser.Scene {
 
   syncCamera() {
     const W = this.W, H = this.H;
+    const camY = this.player.y - SPRITE_H / 2; // center on mid-body, not feet
     this.cameras.main.setScroll(
       Math.max(0, Math.min(MAP_W - W, this.player.x - W / 2)),
-      Math.max(0, Math.min(MAP_H - H, this.player.y - H / 2)),
+      Math.max(0, Math.min(MAP_H - H, camY - H / 2)),
     );
   }
 
@@ -707,28 +900,41 @@ class GameScene extends Phaser.Scene {
     g.fillStyle(0xffffff, 0.15);
     g.fillCircle(this.target.x, this.target.y, 6);
 
-    // Attack range rings
+    // Attack range rings — yellow for passive, red for aggressive
+    // Circles are centered at mid-body (feet pos minus half sprite height)
+    const cy = (e) => e.y - SPRITE_H / 2;
+
     for (const e of this.enemies) {
-      g.fillStyle(0xff5050, 0.07);
-      g.fillCircle(e.x, e.y, ATTACK_RANGE);
-      g.lineStyle(1, 0xff6464, 0.25);
-      g.strokeCircle(e.x, e.y, ATTACK_RANGE);
+      const ringFill   = e.aggressive ? 0xff5050 : 0xddcc22;
+      const ringStroke = e.aggressive ? 0xff6464 : 0xeedd44;
+      g.fillStyle(ringFill, 0.06);
+      g.fillCircle(e.x, cy(e), ATTACK_RANGE);
+      g.lineStyle(1, ringStroke, 0.25);
+      g.strokeCircle(e.x, cy(e), ATTACK_RANGE);
     }
     g.fillStyle(0x44aaff, 0.07);
-    g.fillCircle(this.player.x, this.player.y, ATTACK_RANGE);
+    g.fillCircle(this.player.x, cy(this.player), ATTACK_RANGE);
     g.lineStyle(1, 0x44aaff, 0.25);
-    g.strokeCircle(this.player.x, this.player.y, ATTACK_RANGE);
+    g.strokeCircle(this.player.x, cy(this.player), ATTACK_RANGE);
 
     // Selection rings
     const selEnemy = this.enemies.find(e => e.id === this.player.selectedEnemyId);
     if (selEnemy) {
-      g.lineStyle(2, 0xffffff, 0.85);
-      g.strokeCircle(selEnemy.x, selEnemy.y, RADIUS + 10);
+      g.fillStyle(0xffffff, 0.05);
+      g.fillCircle(selEnemy.x, cy(selEnemy), RADIUS + 16);
+      g.lineStyle(3, 0xffffff, 0.18);
+      g.strokeCircle(selEnemy.x, cy(selEnemy), RADIUS + 16);
+      g.lineStyle(2, 0xffffff, 0.80);
+      g.strokeCircle(selEnemy.x, cy(selEnemy), RADIUS + 11);
     }
     const selNpc = this.npcs.find(n => n.id === this.player.selectedNpcId);
     if (selNpc) {
-      g.lineStyle(2, 0xffdc50, 0.85);
-      g.strokeCircle(selNpc.x, selNpc.y, RADIUS + 10);
+      g.fillStyle(0xffdc50, 0.05);
+      g.fillCircle(selNpc.x, cy(selNpc), RADIUS + 16);
+      g.lineStyle(3, 0xffdc50, 0.18);
+      g.strokeCircle(selNpc.x, cy(selNpc), RADIUS + 16);
+      g.lineStyle(2, 0xffdc50, 0.80);
+      g.strokeCircle(selNpc.x, cy(selNpc), RADIUS + 11);
     }
 
     // Arrows
@@ -743,34 +949,54 @@ class GameScene extends Phaser.Scene {
 
     // ── Update sprites ─────────────────────────────────────────────────
 
-    // Player
-    const isMoving = Math.hypot(this.target.x - this.player.x, this.target.y - this.player.y) > 2;
-    const swinging = this.player.swingTimer > 0 && this.player.weapon === 'sword';
+    // Player — show sprite for current weapon, play attack anim when swinging/shooting
     const depth    = this.player.y;
+    const isMoving = Math.hypot(this.target.x - this.player.x, this.target.y - this.player.y) > 2;
+    const swinging = this.player.swingTimer > 0    && this.player.weapon === 'sword';
+    const shooting = this.player.bowShootTimer > 0 && this.player.weapon === 'bow';
 
-    this.playerSprite.setPosition(this.player.x, this.player.y).setDepth(depth).setVisible(!swinging);
-    this.playerActionSprite.setPosition(this.player.x, this.player.y).setDepth(depth).setVisible(swinging);
+    const activePlayerSprite =
+      this.player.weapon === 'bow'   ? this.playerBowSprite    :
+      this.player.weapon === 'sword' ? this.playerDaggerSprite : this.playerBaseSprite;
+    const activeSheet =
+      this.player.weapon === 'bow'   ? 'player-bow'    :
+      this.player.weapon === 'sword' ? 'player-dagger' : 'player-base';
+
+    for (const s of [this.playerBaseSprite, this.playerDaggerSprite, this.playerBowSprite]) {
+      s.setPosition(this.player.x, this.player.y).setDepth(depth).setVisible(false);
+    }
+    activePlayerSprite.setVisible(true);
 
     if (swinging) {
-      const flipX  = this.player.facing === 'left';
-      const dir    = flipX ? 'right' : (this.player.facing === 'down' || this.player.facing === 'up' ? this.player.facing : 'right');
-      this.playSpriteAnim(this.playerActionSprite, `player-sword-${dir}`);
-      this.playerActionSprite.setFlipX(flipX);
+      this.playSpriteAnim(activePlayerSprite, `player-dagger-slash-${this.player.facing}`);
+    } else if (shooting) {
+      this.playSpriteAnim(activePlayerSprite, `player-bow-shoot-${this.player.facing}`);
     } else {
-      this.updateEntityAnim(this.playerSprite, 'player', this.player.facing, isMoving);
+      this.updateEntityAnim(activePlayerSprite, activeSheet, this.player.facing, isMoving);
     }
 
-    this.playerHpText.setPosition(this.player.x, this.player.y - SPRITE_H - 4);
-    this.playerHpText.setText(`${this.player.hp}/${PLAYER_MAX_HP}`);
+    // Mini HP bar above player head (world space)
+    const barW = 32, barH = 4;
+    const barX = this.player.x - barW / 2, barY = this.player.y - SPRITE_H - 6;
+    const hpFracP = this.player.hp / PLAYER_MAX_HP;
+    const hpColorP = hpFracP > 0.5 ? 0x44cc44 : hpFracP > 0.25 ? 0xddaa00 : 0xcc2222;
+    g.fillStyle(0x111111, 0.8); g.fillRect(barX, barY, barW, barH);
+    if (hpFracP > 0) { g.fillStyle(hpColorP, 1); g.fillRect(barX, barY, barW * hpFracP, barH); }
+    g.lineStyle(1, 0x000000, 0.6); g.strokeRect(barX, barY, barW, barH);
 
     // Enemies
     for (const enemy of this.enemies) {
       const t = this.enemyTextMap.get(enemy.id);
       if (!t) continue;
       t.sprite.setPosition(enemy.x, enemy.y).setDepth(enemy.y);
-      const enemyMoving = enemy.state === 'chasing' || enemy.state === 'returning';
-      this.updateEntityAnim(t.sprite, 'skeleton', enemy.facing, enemyMoving);
-      t.hp.setPosition(enemy.x, enemy.y - SPRITE_H - 4).setText(`${enemy.hp}/${enemy.maxHp}`);
+      if (enemy.dying) {
+        this.playSpriteAnim(t.sprite, 'weirdo-hurt');
+      } else if (enemy.thrustTimer > 0) {
+        this.playSpriteAnim(t.sprite, `weirdo-thrust-${enemy.facing}`);
+      } else {
+        const enemyMoving = enemy.state === 'chasing' || enemy.state === 'returning' || enemy.state === 'wandering';
+        this.updateEntityAnim(t.sprite, 'weirdo', enemy.facing, enemyMoving);
+      }
     }
 
     // NPCs
@@ -791,8 +1017,30 @@ class GameScene extends Phaser.Scene {
     const W = this.W, H = this.H;
     g.clear();
 
-    this.levelText.setText(`Level ${this.player.level}   Damage ${this.player.damage}`);
-    this.xpText.setText(`XP  ${this.player.xp} / 100`);
+    // Stats panel
+    const panelW = 160, panelH = 94;
+    g.fillStyle(0x000000, 0.50); g.fillRoundedRect(8, 8, panelW, panelH, 6);
+    g.lineStyle(1, 0x444444, 0.7); g.strokeRoundedRect(8, 8, panelW, panelH, 6);
+
+    this.levelText.setText(`Level ${this.player.level}`);
+    this.damageText.setText(`DMG  ${this.player.damage}`);
+
+    // HP bar
+    const hp = this.player.hp, hpBarX = 16, hpBarY = 34, hpBarW = 136, hpBarH = 12;
+    const hpFrac  = hp / PLAYER_MAX_HP;
+    const hpColor = Phaser.Display.Color.HSLToColor(hpFrac * 110 / 360, 0.75, 0.42).color;
+    g.fillStyle(0x222222, 1); g.fillRoundedRect(hpBarX, hpBarY, hpBarW, hpBarH, 4);
+    if (hpFrac > 0) { g.fillStyle(hpColor, 1); g.fillRoundedRect(hpBarX, hpBarY, hpBarW * hpFrac, hpBarH, 4); }
+    g.lineStyle(1, 0x553333, 0.6); g.strokeRoundedRect(hpBarX, hpBarY, hpBarW, hpBarH, 4);
+    this.hpText.setText(`HP  ${hp} / ${PLAYER_MAX_HP}`).setPosition(hpBarX + hpBarW / 2, hpBarY + hpBarH / 2);
+
+    // XP bar
+    const xp = this.player.xp, xpMax = 100;
+    const barX = 16, barY = 53, barW = 136, barH = 12;
+    g.fillStyle(0x222222, 1); g.fillRoundedRect(barX, barY, barW, barH, 4);
+    if (xp > 0) { g.fillStyle(0x3388ff, 1); g.fillRoundedRect(barX, barY, barW * (xp / xpMax), barH, 4); }
+    g.lineStyle(1, 0x445566, 0.6); g.strokeRoundedRect(barX, barY, barW, barH, 4);
+    this.xpText.setText(`XP  ${xp} / ${xpMax}`).setPosition(barX + barW / 2, barY + barH / 2);
     this.versionText.setY(H - 8);
 
     const selEnemy = this.enemies.find(e => e.id === this.player.selectedEnemyId);
@@ -869,15 +1117,42 @@ class GameScene extends Phaser.Scene {
   }
 
   drawAttackButton(g) {
-    const r      = this.attackBtnRect();
-    const hasSel = this.player.selectedEnemyId !== null && this.enemies.some(e => e.id === this.player.selectedEnemyId);
-    const active = hasSel && !(this.player.weapon === 'bow' && this.player.bowCd > 0);
-    g.fillStyle(active ? 0xb42828 : 0x1c1c1c, active ? 0.90 : 0.82);
+    const r          = this.attackBtnRect();
+    const hasSel     = this.player.selectedEnemyId !== null && this.enemies.some(e => e.id === this.player.selectedEnemyId);
+    const hasNear    = !hasSel && this.nearestEnemyInAttackRange() !== null;
+    const enabled    = hasSel || hasNear;
+    const inMode     = this.player.attackMode;
+    const bowOnCd    = this.player.weapon === 'bow' && this.player.bowCd > 0;
+
+    let fillColor, fillAlpha, borderColor, borderWidth, textColor;
+    if (inMode && !bowOnCd) {
+      // Attack Mode active — muted red with pulsing border
+      const pulse = 0.6 + 0.4 * Math.abs(Math.sin(this.time.now / 280));
+      fillColor   = 0x6e1818; fillAlpha = 0.95;
+      borderColor = Phaser.Display.Color.Interpolate.ColorWithColor(
+        { r: 180, g: 60, b: 60 }, { r: 255, g: 160, b: 160 }, 100, Math.round(pulse * 100)
+      );
+      borderColor = Phaser.Display.Color.GetColor(borderColor.r, borderColor.g, borderColor.b);
+      borderWidth = 2.5;
+      textColor   = '#ffffff';
+    } else if (enabled && !bowOnCd) {
+      // Ready to attack — bright red
+      fillColor = 0xb42828; fillAlpha = 0.90;
+      borderColor = 0xff8888; borderWidth = 1.5;
+      textColor   = '#ffffff';
+    } else {
+      // Disabled
+      fillColor = 0x1c1c1c; fillAlpha = 0.82;
+      borderColor = 0x444444; borderWidth = 1.5;
+      textColor   = '#444444';
+    }
+
+    g.fillStyle(fillColor, fillAlpha);
     g.fillRect(r.x, r.y, r.w, r.h);
-    g.lineStyle(1.5, active ? 0xff8888 : 0x444444, 1);
+    g.lineStyle(borderWidth, borderColor, 1);
     g.strokeRect(r.x, r.y, r.w, r.h);
     this.attackBtnText.setPosition(r.x + r.w / 2, r.y + r.h / 2);
-    this.attackBtnText.setColor(active ? '#ffffff' : (hasSel ? '#aa6666' : '#444444'));
+    this.attackBtnText.setColor(textColor);
   }
 
   drawTalkButton(g) {
@@ -890,7 +1165,7 @@ class GameScene extends Phaser.Scene {
     g.lineStyle(1.5, active ? 0x88ff88 : 0x444444, 1);
     g.strokeRect(r.x, r.y, r.w, r.h);
     this.talkBtnText.setPosition(r.x + r.w / 2, r.y + r.h / 2);
-    this.talkBtnText.setColor(active ? '#ffffff' : (inRange ? '#668866' : '#444444'));
+    this.talkBtnText.setColor(active ? '#ffffff' : '#668866');
     this.talkBtnText.setVisible(true);
   }
 
@@ -916,8 +1191,7 @@ class GameScene extends Phaser.Scene {
     g.lineStyle(1, 0x555555, 1); g.strokeRect(mm.x, mm.y, MINIMAP_SIZE, MINIMAP_SIZE);
     g.fillStyle(0x2a6a2a, 1);
     for (const t of this.trees) {
-      const ts = TREE_SIZE * scale;
-      g.fillRect(mm.x + t.x * scale - ts / 2, mm.y + t.y * scale - ts / 2, ts, ts);
+      g.fillRect(mm.x + t.x * scale - 1, mm.y + t.y * scale - 1, 2, 2);
     }
     g.fillStyle(0xeeeeee, 1);
     for (const e of this.enemies) g.fillRect(mm.x + e.x * scale - 2, mm.y + e.y * scale - 2, 4, 4);
@@ -943,6 +1217,7 @@ new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'game-container',
   backgroundColor: '#111111',
+  pixelArt: true,
   scene: GameScene,
   scale: {
     mode: Phaser.Scale.RESIZE,

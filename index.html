@@ -29,12 +29,9 @@
       font-size: 13px;
     }
     #add-enemy:hover { background: #383838; color: #eee; }
-    canvas {
-      display: block;
+    #game-container {
       position: fixed;
-      top: 44px;
-      left: 0;
-      cursor: crosshair;
+      top: 44px; left: 0; right: 0; bottom: 0;
     }
   </style>
 </head>
@@ -42,7 +39,8 @@
   <div id="header">
     <button id="add-enemy">Add Enemy</button>
   </div>
-  <canvas id="canvas"></canvas>
+  <div id="game-container"></div>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
   <script>
     const s = document.createElement('script');
     s.src = 'game.js?v=' + Date.now();
