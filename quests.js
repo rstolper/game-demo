@@ -55,9 +55,9 @@ export const NPC_QUESTS = {
     {
       when:    ctx => ctx.kills >= KILL_GOAL,
       lines: [
-        "Wow, thank you",
-        "You really didn't hesitate, I'm a little spooked myself",
-        "But what can I say you got the job done. Here's a reward for your efforts",
+        "Wow! They're finally paying me back.",
+        "Honestly, the way you just slaughtered them without even a follow-up question, I'm a little spooked myself.",
+        "But what can I say, you got the job done. Here's a little thank you.",
       ],
       xp:      50,
       setFlag: 'rewardGiven',
@@ -73,10 +73,10 @@ export const NPC_QUESTS = {
     {
       when:    () => true,
       lines: [
-        "Hey there",
-        "You want to know how my loans business is going? Not good, my friend, not good",
-        "Why, you ask? Well, I've been making loans to the mice around here, but they aren't paying me back!",
-        "Hmm, yeah, you've got a rough look about you. Think you could show em that Jimmy means business?",
+        "Hey there.",
+        "How's business, you ask? Not good, my friend, not good.",
+        "Why not? Well, I've been making loans to the mice around here, but they aren't paying me back!",
+        "You've got a rough look about you. Think you could do me a favor and show these mice that Jimmy means business?",
       ],
       setFlag: 'talked',
     },

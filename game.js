@@ -297,11 +297,11 @@ class GameScene extends Phaser.Scene {
     this.npcs.push(npc);
     const sprite = this.add.sprite(x, y, 'jimmy-walk').setOrigin(0.5, 1).setDepth(y);
     sprite.play('jimmy-idle-down');
-    const bubStyle = { fontFamily: 'monospace', fontSize: '12px', color: '#ffffff', stroke: '#000000', strokeThickness: 3, wordWrap: { width: 260 }, fixedWidth: 260, align: 'center' };
+    const bubStyle = { fontFamily: 'monospace', fontSize: '12px', color: '#ffffff', stroke: '#000000', strokeThickness: 3, wordWrap: { width: 260 } };
     this.npcTextMap.set(npc.id, {
       sprite,
       name:       this.add.text(x, y - RADIUS - 4, name, { fontFamily: 'monospace', fontSize: '11px', color: '#ffe090' }).setOrigin(0.5, 1).setDepth(DEPTH_WORLD_TEXT),
-      bubbleObjs: [0, 1, 2, 3].map(() => this.add.text(x, y, '', bubStyle).setOrigin(0.5, 1).setDepth(DEPTH_WORLD_TEXT).setVisible(false)),
+      bubbleObjs: [0, 1, 2, 3].map(() => this.add.text(x, y, '', bubStyle).setOrigin(0, 1).setDepth(DEPTH_WORLD_TEXT).setVisible(false)),
     });
     return npc;
   }
@@ -362,12 +362,12 @@ class GameScene extends Phaser.Scene {
 
   // ── Floating damage numbers ───────────────────────────────────────────────
 
-  spawnDamageNumber(wx, wy, amount, color) {
-    const t = this.add.text(wx, wy - SPRITE_H / 2, `-${amount}`, {
+  spawnDamageNumber(wx, wy, amount, color, duration = 0.9, prefix = '-', suffix = '') {
+    const t = this.add.text(wx, wy - SPRITE_H / 2, `${prefix}${amount}${suffix}`, {
       fontFamily: 'monospace', fontSize: '13px', color,
       stroke: '#000000', strokeThickness: 3,
     }).setOrigin(0.5, 1).setDepth(DEPTH_FLOAT_TEXT);
-    this.floatingNums.push({ obj: t, vy: -60, timer: 0.9 });
+    this.floatingNums.push({ obj: t, vy: -60, timer: duration });
   }
 
   updateFloatingNums(dt) {
@@ -562,12 +562,18 @@ class GameScene extends Phaser.Scene {
     }
     if (!npc) return;
 
-    const npcKey  = npc.name.toLowerCase();
+    const { dlg } = npc;
+
+    // Bail if the current sequence is exhausted — player must leave and return first
+    const npcKey = npc.name.toLowerCase();
+    if (dlg.ruleIdx !== -1) {
+      const activeRule = NPC_QUESTS[npcKey]?.[dlg.ruleIdx];
+      if (activeRule && dlg.lineIdx >= activeRule.lines.length) return;
+    }
+
     const allDead = this.enemies.filter(e => !e.dying).length === 0 && this.player.enemiesKilled > 0;
     const ruleIdx = resolveRuleIndex(npcKey, this.questState, this.player.enemiesKilled, allDead);
     if (ruleIdx === -1) return;
-
-    const { dlg } = npc;
 
     // If game state shifted to a different rule, restart the sequence
     if (dlg.ruleIdx !== ruleIdx) {
@@ -591,7 +597,7 @@ class GameScene extends Phaser.Scene {
       if (rule.xp) {
         this.player.xp += rule.xp;
         while (this.player.xp >= 100) { this.player.xp -= 100; this.player.level++; this.player.damage++; }
-        this.spawnDamageNumber(this.player.x, this.player.y - 20, rule.xp, '#44aaff');
+        this.spawnDamageNumber(this.player.x, this.player.y - 20, rule.xp, '#44aaff', 4, '+', ' XP');
       }
       if (rule.setFlag) {
         if (!this.questState[npcKey]) this.questState[npcKey] = {};

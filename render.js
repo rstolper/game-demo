@@ -140,7 +140,7 @@ export function updateSprites(scene) {
       const bo  = t.bubbleObjs[i];
       const str = bubs[bubs.length - 1 - i]; // newest first (bottom), oldest last (top)
       if (str === undefined) { bo.setVisible(false); continue; }
-      bo.setText(str).setPosition(npc.x, yBase).setVisible(true);
+      bo.setText(str).setPosition(npc.x - 50, yBase).setVisible(true);
       yBase -= (bo.height + 4);
     }
   }
