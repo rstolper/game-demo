@@ -1,4 +1,4 @@
-export const VERSION = '2026-05-19 18:00';
+export const VERSION = '2026-05-19 18:30';
 
 // World
 export const RADIUS           = 18;
@@ -47,7 +47,7 @@ export const WANDER_TIMEOUT      = 5.0;
 export const TAP_MAX_MS = 300;
 
 // NPC
-export const TALK_RADIUS   = RADIUS * 6;  // conversation zone; leaving clears bubbles
+export const TALK_RADIUS   = RADIUS * 8;  // conversation zone; leaving clears bubbles
 
 // Map / tiles
 export const TREE_TILE_SIZE = 32;

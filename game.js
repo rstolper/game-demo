@@ -297,7 +297,7 @@ class GameScene extends Phaser.Scene {
     this.npcs.push(npc);
     const sprite = this.add.sprite(x, y, 'jimmy-walk').setOrigin(0.5, 1).setDepth(y);
     sprite.play('jimmy-idle-down');
-    const bubStyle = { fontFamily: 'monospace', fontSize: '12px', color: '#222222', backgroundColor: '#f0eed7', padding: { x: 8, y: 4 }, wordWrap: { width: 260 } };
+    const bubStyle = { fontFamily: 'monospace', fontSize: '12px', color: '#222222', backgroundColor: '#f0eed7', padding: { x: 8, y: 4 }, wordWrap: { width: 260 }, fixedWidth: 276 };
     this.npcTextMap.set(npc.id, {
       sprite,
       name:       this.add.text(x, y - RADIUS - 4, name, { fontFamily: 'monospace', fontSize: '11px', color: '#ffe090' }).setOrigin(0.5, 1).setDepth(DEPTH_WORLD_TEXT),
@@ -726,10 +726,13 @@ class GameScene extends Phaser.Scene {
   drawTalkButton(g) {
     const nearNpc = this.npcs.find(n => Math.hypot(this.player.x - n.x, this.player.y - n.y) <= TALK_RADIUS);
     if (!nearNpc) { this.talkBtnText.setVisible(false); return; }
+    const { dlg } = nearNpc;
+    const rules = NPC_QUESTS[nearNpc.name.toLowerCase()];
+    const exhausted = dlg.ruleIdx !== -1 && rules && dlg.lineIdx >= rules[dlg.ruleIdx].lines.length;
     const r = this.talkBtnRect();
-    g.fillStyle(0x28a050, 0.90); g.fillRect(r.x, r.y, r.w, r.h);
-    g.lineStyle(1.5, 0x88ff88, 1); g.strokeRect(r.x, r.y, r.w, r.h);
-    this.talkBtnText.setPosition(r.x + r.w / 2, r.y + r.h / 2).setColor('#ffffff');
+    g.fillStyle(exhausted ? 0x1c1c1c : 0x28a050, exhausted ? 0.82 : 0.90); g.fillRect(r.x, r.y, r.w, r.h);
+    g.lineStyle(1.5, exhausted ? 0x444444 : 0x88ff88, 1); g.strokeRect(r.x, r.y, r.w, r.h);
+    this.talkBtnText.setPosition(r.x + r.w / 2, r.y + r.h / 2).setColor(exhausted ? '#668866' : '#ffffff');
     this.talkBtnText.setVisible(true);
   }
 
