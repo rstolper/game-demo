@@ -1,4 +1,4 @@
-export const VERSION = '2026-05-19 19:00';
+export const VERSION = '2026-05-19 19:15';
 
 // World
 export const RADIUS           = 18;
