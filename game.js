@@ -12,7 +12,7 @@ import {
   POTION_HEAL, POTION_CD, POTION_SIZE,
   WEAPON_SIZE, WEAPON_MARGIN, ATTACK_BTN_H, TALK_BTN_H,
   MINIMAP_SIZE, MINIMAP_MARGIN,
-  TALK_RADIUS, TALK_DURATION,
+  TALK_RADIUS,
   DEPTH_LAND, DEPTH_TRUNKS, DEPTH_CANOPY,
   DEPTH_WORLD_GFX, DEPTH_WORLD_TEXT, DEPTH_FLOAT_TEXT, DEPTH_HUD, DEPTH_GAME_OVER,
 } from './constants.js';
@@ -20,7 +20,7 @@ import { createAnimations }              from './animations.js';
 import { updateEnemyAI }                 from './ai.js';
 import { updateCombat }                  from './combat.js';
 import { renderWorldGfx, updateSprites, renderUI } from './render.js';
-import { resolveDialogue } from './quests.js';
+import { NPC_QUESTS, resolveRuleIndex } from './quests.js';
 
 class GameScene extends Phaser.Scene {
   constructor() { super('GameScene'); }
@@ -98,6 +98,7 @@ class GameScene extends Phaser.Scene {
       updateEnemyAI(this, dt);
       updateCombat(this, dt);
       this.updateFloatingNums(dt);
+      this.updateNpcConversations();
     }
     this.syncCamera();
     renderWorldGfx(this);
@@ -292,14 +293,15 @@ class GameScene extends Phaser.Scene {
   }
 
   addNpc(x, y, name) {
-    const npc = { id: this.nextId++, x, y, name, talkTimer: 0 };
+    const npc = { id: this.nextId++, x, y, name, dlg: { ruleIdx: -1, lineIdx: 0, bubbles: [] } };
     this.npcs.push(npc);
     const sprite = this.add.sprite(x, y, 'jimmy-walk').setOrigin(0.5, 1).setDepth(y);
     sprite.play('jimmy-idle-down');
+    const bubStyle = { fontFamily: 'monospace', fontSize: '12px', color: '#222222', backgroundColor: '#f0eed7', padding: { x: 8, y: 4 }, wordWrap: { width: 260 } };
     this.npcTextMap.set(npc.id, {
       sprite,
-      name:     this.add.text(x, y - RADIUS - 4,  name, { fontFamily: 'monospace', fontSize: '11px', color: '#ffe090' }).setOrigin(0.5, 1).setDepth(DEPTH_WORLD_TEXT),
-      dialogue: this.add.text(x, y - RADIUS - 20, '',   { fontFamily: 'monospace', fontSize: '12px', color: '#222222', backgroundColor: '#f0eed7', padding: { x: 8, y: 4 }, wordWrap: { width: 260 } }).setOrigin(0.5, 1).setDepth(DEPTH_WORLD_TEXT).setVisible(false),
+      name:       this.add.text(x, y - RADIUS - 4, name, { fontFamily: 'monospace', fontSize: '11px', color: '#ffe090' }).setOrigin(0.5, 1).setDepth(DEPTH_WORLD_TEXT),
+      bubbleObjs: [0, 1, 2, 3].map(() => this.add.text(x, y, '', bubStyle).setOrigin(0.5, 1).setDepth(DEPTH_WORLD_TEXT).setVisible(false)),
     });
     return npc;
   }
@@ -558,30 +560,56 @@ class GameScene extends Phaser.Scene {
         .sort((a, b) => Math.hypot(this.player.x - a.x, this.player.y - a.y)
                       - Math.hypot(this.player.x - b.x, this.player.y - b.y))[0];
     }
-    if (!npc || npc.talkTimer > 0) return;
+    if (!npc) return;
 
-    const npcKey = npc.name.toLowerCase();
+    const npcKey  = npc.name.toLowerCase();
     const allDead = this.enemies.filter(e => !e.dying).length === 0 && this.player.enemiesKilled > 0;
-    const line = resolveDialogue(npcKey, this.questState, this.player.enemiesKilled, allDead);
+    const ruleIdx = resolveRuleIndex(npcKey, this.questState, this.player.enemiesKilled, allDead);
+    if (ruleIdx === -1) return;
 
-    if (line) {
-      // Update the speech bubble text
-      const t = this.npcTextMap.get(npc.id);
-      if (t) t.dialogue.setText(line.text);
-      // Award XP if this line grants it
-      if (line.xp) {
-        this.player.xp += line.xp;
-        while (this.player.xp >= 100) { this.player.xp -= 100; this.player.level++; this.player.damage++; }
-        this.spawnDamageNumber(this.player.x, this.player.y - 20, line.xp, '#44aaff');
-      }
-      // Persist any flag this line sets
-      if (line.setFlag) {
-        if (!this.questState[npcKey]) this.questState[npcKey] = {};
-        this.questState[npcKey][line.setFlag] = true;
-      }
+    const { dlg } = npc;
+
+    // If game state shifted to a different rule, restart the sequence
+    if (dlg.ruleIdx !== ruleIdx) {
+      dlg.ruleIdx = ruleIdx;
+      dlg.lineIdx = 0;
+      dlg.bubbles = [];
     }
 
-    npc.talkTimer = TALK_DURATION;
+    const rule = NPC_QUESTS[npcKey][ruleIdx];
+    if (dlg.lineIdx >= rule.lines.length) return; // sequence exhausted
+
+    const isLast = dlg.lineIdx === rule.lines.length - 1;
+
+    // Evict oldest bubble if already at cap of 4
+    if (dlg.bubbles.length === 4) dlg.bubbles.shift();
+    dlg.bubbles.push(rule.lines[dlg.lineIdx]);
+    dlg.lineIdx++;
+
+    // Flags and XP fire only on the last line
+    if (isLast) {
+      if (rule.xp) {
+        this.player.xp += rule.xp;
+        while (this.player.xp >= 100) { this.player.xp -= 100; this.player.level++; this.player.damage++; }
+        this.spawnDamageNumber(this.player.x, this.player.y - 20, rule.xp, '#44aaff');
+      }
+      if (rule.setFlag) {
+        if (!this.questState[npcKey]) this.questState[npcKey] = {};
+        this.questState[npcKey][rule.setFlag] = true;
+      }
+    }
+  }
+
+  updateNpcConversations() {
+    for (const npc of this.npcs) {
+      if (Math.hypot(this.player.x - npc.x, this.player.y - npc.y) > TALK_RADIUS) {
+        if (npc.dlg.bubbles.length > 0 || npc.dlg.lineIdx > 0) {
+          npc.dlg.bubbles = [];
+          npc.dlg.lineIdx = 0;
+          npc.dlg.ruleIdx = -1;
+        }
+      }
+    }
   }
 
   // ── Queries ───────────────────────────────────────────────────────────────
@@ -698,11 +726,10 @@ class GameScene extends Phaser.Scene {
   drawTalkButton(g) {
     const nearNpc = this.npcs.find(n => Math.hypot(this.player.x - n.x, this.player.y - n.y) <= TALK_RADIUS);
     if (!nearNpc) { this.talkBtnText.setVisible(false); return; }
-    const r      = this.talkBtnRect();
-    const active = nearNpc.talkTimer <= 0;
-    g.fillStyle(active ? 0x28a050 : 0x1c1c1c, active ? 0.90 : 0.82); g.fillRect(r.x, r.y, r.w, r.h);
-    g.lineStyle(1.5, active ? 0x88ff88 : 0x444444, 1); g.strokeRect(r.x, r.y, r.w, r.h);
-    this.talkBtnText.setPosition(r.x + r.w / 2, r.y + r.h / 2).setColor(active ? '#ffffff' : '#668866');
+    const r = this.talkBtnRect();
+    g.fillStyle(0x28a050, 0.90); g.fillRect(r.x, r.y, r.w, r.h);
+    g.lineStyle(1.5, 0x88ff88, 1); g.strokeRect(r.x, r.y, r.w, r.h);
+    this.talkBtnText.setPosition(r.x + r.w / 2, r.y + r.h / 2).setColor('#ffffff');
     this.talkBtnText.setVisible(true);
   }
 

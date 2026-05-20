@@ -133,7 +133,16 @@ export function updateSprites(scene) {
     const t = scene.npcTextMap.get(npc.id);
     if (!t) continue;
     t.name.setPosition(npc.x, npc.y - SPRITE_H - 4);
-    t.dialogue.setPosition(npc.x, npc.y - SPRITE_H - 22).setVisible(npc.talkTimer > 0);
+    // Stack bubbles upward above the name label; newest bubble sits closest to the NPC
+    let yBase = npc.y - SPRITE_H - 26;
+    const bubs = npc.dlg.bubbles;
+    for (let i = 0; i < 4; i++) {
+      const bo  = t.bubbleObjs[i];
+      const str = bubs[bubs.length - 1 - i]; // newest first (bottom), oldest last (top)
+      if (str === undefined) { bo.setVisible(false); continue; }
+      bo.setText(str).setPosition(npc.x, yBase).setVisible(true);
+      yBase -= (bo.height + 4);
+    }
   }
 }
 
