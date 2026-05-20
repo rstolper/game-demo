@@ -1,4 +1,4 @@
-export const VERSION = '2026-05-19 12:00';
+export const VERSION = '2026-05-19 17:30';
 
 // World
 export const RADIUS           = 18;
@@ -19,8 +19,12 @@ export const ATTACK_MODE_GRACE = 3.0;
 
 // Bow
 export const BOW_RANGE   = 900;
-export const BOW_CD      = 2.0;
+export const BOW_CD      = 1.0;   // cooldown after shoot animation completes
 export const ARROW_SPEED = 500;
+// Shoot animation: 13 frames, frame 8 lingers at 220ms, all others 70ms → 1.06s total
+// Arrow releases at frame 9: time remaining = 4 frames × 70ms = 0.28s
+export const BOW_SHOOT_DURATION         = 1.06;
+export const BOW_ARROW_RELEASE_THRESHOLD = 0.28;
 
 // Enemy
 export const ENEMY_SPEED           = 120;
@@ -39,6 +43,9 @@ export const WANDER_INTERVAL_MAX = 8;
 export const WANDER_SPEED_MULT   = 0.45;
 export const WANDER_TIMEOUT      = 5.0;
 
+// Input
+export const TAP_MAX_MS = 300;
+
 // NPC
 export const TALK_RADIUS   = 150;
 export const TALK_DURATION = 10.0;
@@ -50,14 +57,6 @@ export const TRUNK_TILE_IDS = new Set([441, 442, 443, 473, 474, 475, 569, 570, 5
 // LPC sprite sheets
 export const SPRITE_W      = 64;
 export const SPRITE_H      = 64;
-export const LPC_COLS_STD  = 13;
-export const LPC_COLS_BOW  = 18;
-
-export const LPC_WALK_ROWS   = { up: 8,  left: 9,  down: 10, right: 11 };
-export const LPC_THRUST_ROWS = { up: 4,  left: 5,  down: 6,  right: 7  };
-export const LPC_SLASH_ROWS  = { up: 12, left: 13, down: 14, right: 15 };
-export const LPC_SHOOT_ROWS  = { up: 16, left: 17, down: 18, right: 19 };
-export const LPC_HURT_ROW    = 20;
 
 export const LPC_WALK_FRAMES   = [0, 1, 2, 3, 4, 5, 6, 7, 8];
 export const LPC_THRUST_FRAMES = [0, 1, 2, 3, 4, 5, 6, 7];
@@ -82,6 +81,10 @@ export const MINIMAP_MARGIN = 10;
 export const ENTITY_HP_BAR_W      = 32;
 export const ENTITY_HP_BAR_H      = 4;
 export const ENTITY_HP_BAR_OFFSET = SPRITE_H + 6; // px above sprite feet
+
+// Bow walk sprite (128px) has transparent padding below the character's feet.
+// This offset pushes it down so feet align with player.y like all other sprites.
+export const BOW_WALK_Y_OFFSET = 32;
 
 // Depth stack
 export const DEPTH_LAND        = 0;

@@ -3,6 +3,7 @@ import {
   PLAYER_MAX_HP, ATTACK_BTN_H, BOW_CD, PLAYER_ATTACK_CD,
   MINIMAP_SIZE, MINIMAP_MARGIN,
   ENTITY_HP_BAR_W, ENTITY_HP_BAR_H, ENTITY_HP_BAR_OFFSET,
+  BOW_WALK_Y_OFFSET,
   DEPTH_HUD,
 } from './constants.js';
 
@@ -89,25 +90,29 @@ function _drawHpBar(g, x, y, frac) {
 
 export function updateSprites(scene) {
   const { player } = scene;
-  const depth = player.y;
-  const isMoving  = Math.hypot(scene.target.x - player.x, scene.target.y - player.y) > 2;
-  const swinging  = player.swingTimer    > 0 && player.weapon === 'sword';
-  const shooting  = player.bowShootTimer > 0 && player.weapon === 'bow';
+  const depth    = player.y;
+  const isMoving = Math.hypot(scene.target.x - player.x, scene.target.y - player.y) > 2;
+  const swinging = player.swingTimer    > 0 && player.weapon === 'sword';
+  const shooting = player.bowShootTimer > 0 && player.weapon === 'bow';
+  const isBow    = player.weapon === 'bow';
 
   const activeSprite =
-    player.weapon === 'bow'   ? scene.playerBowSprite    :
+    (isBow && shooting) ? scene.playerBowShootSprite :
+    isBow               ? scene.playerBowWalkSprite  :
     player.weapon === 'sword' ? scene.playerDaggerSprite : scene.playerBaseSprite;
   const activeSheet =
-    player.weapon === 'bow'   ? 'player-bow'    :
-    player.weapon === 'sword' ? 'player-dagger' : 'player-base';
+    isBow               ? 'bow'    :
+    player.weapon === 'sword' ? 'dagger' : 'player';
 
-  for (const s of [scene.playerBaseSprite, scene.playerDaggerSprite, scene.playerBowSprite]) {
+  for (const s of [scene.playerBaseSprite, scene.playerDaggerSprite, scene.playerBowWalkSprite, scene.playerBowShootSprite]) {
     s.setPosition(player.x, player.y).setDepth(depth).setVisible(false);
   }
+  // Bow walk frames have transparent padding below the feet; shift down to realign.
+  scene.playerBowWalkSprite.setY(player.y + BOW_WALK_Y_OFFSET);
   activeSprite.setVisible(true);
 
-  if (swinging)      scene.playSpriteAnim(activeSprite, `player-dagger-slash-${player.facing}`);
-  else if (shooting) scene.playSpriteAnim(activeSprite, `player-bow-shoot-${player.facing}`);
+  if (swinging)      scene.playSpriteAnim(activeSprite, `dagger-slash-${player.facing}`);
+  else if (shooting) scene.playSpriteAnim(activeSprite, `bow-shoot-${player.facing}`);
   else               scene.updateEntityAnim(activeSprite, activeSheet, player.facing, isMoving);
 
   for (const enemy of scene.enemies) {

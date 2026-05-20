@@ -1,21 +1,24 @@
 import {
-  RADIUS, ATTACK_RANGE,
+  RADIUS, ATTACK_RANGE, SPRITE_H,
   PLAYER_MAX_HP, PLAYER_ATTACK_CD, ENEMY_ATTACK, ENEMY_ATTACK_CD,
   REGEN_INTERVAL, REGEN_COMBAT_DELAY, ENEMY_REGEN_INTERVAL,
   LPC_SLASH_FRAMES, LPC_THRUST_FRAMES,
   PLAYER_SWING_HIT_THRESHOLD, ENEMY_HIT_THRESHOLD,
+  BOW_CD, BOW_ARROW_RELEASE_THRESHOLD,
 } from './constants.js';
 
 export function updateCombat(scene, dt) {
   const { player } = scene;
 
   _tickPlayerCooldowns(player, dt);
+  _tickBowShoot(scene, dt);
   _resolvePlayerSwing(scene, dt);
   _tickEnemyTimers(scene, dt);
   _updateArrows(scene, dt);
 
   const anyInRange = _triggerEnemyAttacks(scene);
   _triggerPlayerSwing(scene);
+  _triggerPlayerBowShoot(scene);
   _cleanupDeadEnemies(scene);
   _regenEnemies(scene.enemies, dt);
   _regenPlayer(player, scene, anyInRange, dt);
@@ -25,16 +28,44 @@ export function updateCombat(scene, dt) {
 // ── Player cooldowns ───────────────────────────────────────────────────────
 
 function _tickPlayerCooldowns(player, dt) {
-  player.attackCd      = Math.max(0, player.attackCd      - dt);
-  player.potionCd      = Math.max(0, player.potionCd      - dt);
-  player.bowCd         = Math.max(0, player.bowCd         - dt);
-  player.swingTimer    = Math.max(0, player.swingTimer    - dt);
-  player.bowShootTimer = Math.max(0, player.bowShootTimer - dt);
+  player.attackCd    = Math.max(0, player.attackCd    - dt);
+  player.potionCd    = Math.max(0, player.potionCd    - dt);
+  player.bowCd       = Math.max(0, player.bowCd       - dt);
+  player.swingTimer  = Math.max(0, player.swingTimer  - dt);
 
   if (player.attackModeTimer > 0) {
     player.attackModeTimer = Math.max(0, player.attackModeTimer - dt);
     if (player.attackModeTimer === 0) player.attackMode = false;
   }
+}
+
+// ── Bow shoot animation lifecycle ─────────────────────────────────────────
+
+function _tickBowShoot(scene, dt) {
+  const { player } = scene;
+  if (player.bowShootTimer <= 0) return;
+
+  const prev = player.bowShootTimer;
+  player.bowShootTimer = Math.max(0, player.bowShootTimer - dt);
+
+  // Cancel early if moving before arrow releases
+  if (player.bowArrowPending) {
+    if (Math.hypot(scene.target.x - player.x, scene.target.y - player.y) > 2) {
+      player.bowArrowPending = false;
+      player.bowShootTimer   = 0;
+      player.bowCd           = BOW_CD;
+      return;
+    }
+    // Fire arrow when timer crosses release threshold (frame 9)
+    if (prev > BOW_ARROW_RELEASE_THRESHOLD && player.bowShootTimer <= BOW_ARROW_RELEASE_THRESHOLD) {
+      const tgt = scene.enemies.find(e => e.id === player.attackTarget);
+      if (tgt && !tgt.dying) scene.spawnArrow(tgt);
+      player.bowArrowPending = false;
+    }
+  }
+
+  // Start cooldown when animation finishes
+  if (prev > 0 && player.bowShootTimer === 0) player.bowCd = BOW_CD;
 }
 
 // ── Player sword swing — damage fires as swingDamageTimer crosses 0 ───────
@@ -102,16 +133,36 @@ function _updateArrows(scene, dt) {
     if (a.lifetime <= 0) return false;
     for (const enemy of scene.enemies) {
       if (enemy.dying) continue;
-      if (Math.hypot(a.x - enemy.x, a.y - enemy.y) <= RADIUS) {
+      if (Math.hypot(a.x - enemy.x, a.y - (enemy.y - SPRITE_H / 2)) <= RADIUS) {
         enemy.aggressive = true;
+        enemy.state      = 'chasing';
         enemy.hp = Math.max(0, enemy.hp - player.damage);
         scene.spawnDamageNumber(enemy.x, enemy.y, player.damage, '#ffdd44');
-        if (enemy.hp === 0) { scene.awardXp(); scene.startEnemyDeath(enemy); }
+        if (enemy.hp === 0) {
+          scene.awardXp();
+          scene.startEnemyDeath(enemy);
+          if (player.attackTarget === enemy.id) {
+            player.attackMode   = false;
+            player.attackTarget = null;
+          }
+        }
         return false;
       }
     }
     return true;
   });
+}
+
+// ── Player bow auto-shoot ──────────────────────────────────────────────────
+
+function _triggerPlayerBowShoot(scene) {
+  const { player } = scene;
+  if (player.weapon !== 'bow' || !player.attackMode) return;
+  if (player.bowCd > 0 || player.bowShootTimer > 0) return;
+  const tgt = scene.enemies.find(e => e.id === player.attackTarget);
+  if (!tgt || tgt.dying) return;
+  if (Math.hypot(scene.target.x - player.x, scene.target.y - player.y) > 2) return;
+  scene.startBowShoot(tgt);
 }
 
 // ── Enemy attacks player — returns true if any enemy was in range ─────────

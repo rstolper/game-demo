@@ -30,6 +30,13 @@
       "recolor": "orange",
       "name": "Curly long (orange)"
     },
+    "clothes": {
+      "itemId": "torso_clothes_tshirt",
+      "subId": null,
+      "variant": "",
+      "recolor": "teal",
+      "name": "TShirt (teal)"
+    },
     "legs": {
       "itemId": "legs_cuffed",
       "subId": null,
@@ -44,22 +51,15 @@
       "recolor": "",
       "name": "Basic Shoes (brown)"
     },
-    "clothes": {
-      "itemId": "torso_clothes_tshirt",
-      "subId": null,
-      "variant": "",
-      "recolor": "teal",
-      "name": "TShirt (teal)"
-    },
     "weapon": {
-      "itemId": "weapon_sword_dagger",
+      "itemId": "weapon_ranged_bow_normal",
       "subId": null,
-      "variant": "dagger",
+      "variant": "light",
       "recolor": "",
-      "name": "Dagger (dagger)"
+      "name": "Normal (light)"
     }
   },
-  "selectedAnimation": "slash",
+  "selectedAnimation": "sit",
   "showTransparencyGrid": true,
   "applyTransparencyMask": false,
   "matchBodyColorEnabled": true,
@@ -90,23 +90,24 @@
     "1h_backslash": false,
     "1h_halfslash": false
   },
-  "url": "https://liberatedpixelcup.github.io/Universal-LPC-Spritesheet-Character-Generator/#sex=male&body=Body_Color_light&head=Human_Male_light&expression=Neutral_light&hair=Curly_long_orange&legs=Cuffed_Pants_bluegray&shoes=Basic_Shoes_brown&clothes=TShirt_teal&weapon=Dagger_dagger",
+  "url": "https://liberatedpixelcup.github.io/Universal-LPC-Spritesheet-Character-Generator/#sex=male&body=Body_Color_light&head=Human_Male_light&expression=Neutral_light&hair=Curly_long_orange&clothes=TShirt_teal&legs=Cuffed_Pants_bluegray&shoes=Basic_Shoes_brown&weapon=Normal_light",
   "layers": [
     {
-      "itemId": "weapon_sword_dagger",
-      "name": "Dagger (dagger)",
-      "variant": "dagger",
+      "itemId": "weapon_ranged_bow_normal",
+      "name": "Normal (light)",
+      "variant": "light",
       "recolors": null,
-      "zPos": 9,
-      "layerNum": 2,
-      "yPos": 256,
-      "isCustom": false,
+      "zPos": -1,
+      "layerNum": 1,
+      "yPos": 512,
       "needsRecolor": false,
-      "fileName": "weapon/sword/dagger/behind/thrust/dagger.png",
+      "source": {
+        "kind": "catalog",
+        "spritePath": "weapon/ranged/bow/normal/universal/background/walk/light.png"
+      },
       "supportedAnimations": [
-        "thrust",
         "walk",
-        "slash",
+        "shoot",
         "hurt"
       ]
     },
@@ -120,9 +121,11 @@
       "zPos": 10,
       "layerNum": 1,
       "yPos": 0,
-      "isCustom": false,
       "needsRecolor": false,
-      "fileName": "body/bodies/male/spellcast.png",
+      "source": {
+        "kind": "catalog",
+        "spritePath": "body/bodies/male/spellcast.png"
+      },
       "supportedAnimations": [
         "spellcast",
         "thrust",
@@ -149,9 +152,11 @@
       "zPos": 15,
       "layerNum": 1,
       "yPos": 0,
-      "isCustom": false,
       "needsRecolor": false,
-      "fileName": "feet/shoes/basic/male/spellcast/brown.png",
+      "source": {
+        "kind": "catalog",
+        "spritePath": "feet/shoes/basic/male/spellcast/brown.png"
+      },
       "supportedAnimations": [
         "spellcast",
         "thrust",
@@ -180,9 +185,11 @@
       "zPos": 20,
       "layerNum": 1,
       "yPos": 0,
-      "isCustom": false,
       "needsRecolor": false,
-      "fileName": "legs/cuffed/male/spellcast.png",
+      "source": {
+        "kind": "catalog",
+        "spritePath": "legs/cuffed/male/spellcast.png"
+      },
       "supportedAnimations": [
         "spellcast",
         "thrust",
@@ -211,9 +218,11 @@
       "zPos": 35,
       "layerNum": 1,
       "yPos": 0,
-      "isCustom": false,
       "needsRecolor": false,
-      "fileName": "torso/clothes/shortsleeve/tshirt/male/spellcast.png",
+      "source": {
+        "kind": "catalog",
+        "spritePath": "torso/clothes/shortsleeve/tshirt/male/spellcast.png"
+      },
       "supportedAnimations": [
         "spellcast",
         "thrust",
@@ -242,9 +251,11 @@
       "zPos": 100,
       "layerNum": 1,
       "yPos": 0,
-      "isCustom": false,
       "needsRecolor": false,
-      "fileName": "head/heads/human/male/spellcast.png",
+      "source": {
+        "kind": "catalog",
+        "spritePath": "head/heads/human/male/spellcast.png"
+      },
       "supportedAnimations": [
         "spellcast",
         "thrust",
@@ -273,9 +284,11 @@
       "zPos": 101,
       "layerNum": 1,
       "yPos": 0,
-      "isCustom": false,
       "needsRecolor": false,
-      "fileName": "head/faces/male/neutral/spellcast.png",
+      "source": {
+        "kind": "catalog",
+        "spritePath": "head/faces/male/neutral/spellcast.png"
+      },
       "supportedAnimations": [
         "spellcast",
         "thrust",
@@ -302,9 +315,11 @@
       "zPos": 120,
       "layerNum": 1,
       "yPos": 0,
-      "isCustom": false,
       "needsRecolor": false,
-      "fileName": "hair/curly_long/adult/spellcast.png",
+      "source": {
+        "kind": "catalog",
+        "spritePath": "hair/curly_long/adult/spellcast.png"
+      },
       "supportedAnimations": [
         "spellcast",
         "thrust",
@@ -324,27 +339,28 @@
       ]
     },
     {
-      "itemId": "weapon_sword_dagger",
-      "name": "Dagger (dagger)",
-      "variant": "dagger",
+      "itemId": "weapon_ranged_bow_normal",
+      "name": "Normal (light)",
+      "variant": "light",
       "recolors": null,
       "zPos": 140,
-      "layerNum": 1,
-      "yPos": 256,
-      "isCustom": false,
+      "layerNum": 2,
+      "yPos": 512,
       "needsRecolor": false,
-      "fileName": "weapon/sword/dagger/thrust/dagger.png",
+      "source": {
+        "kind": "catalog",
+        "spritePath": "weapon/ranged/bow/normal/universal/foreground/walk/light.png"
+      },
       "supportedAnimations": [
-        "thrust",
         "walk",
-        "slash",
+        "shoot",
         "hurt"
       ]
     }
   ],
   "credits": [
     {
-      "fileName": "body/bodies/male/slash.png",
+      "fileName": "body/bodies/male/sit.png",
       "file": "body/bodies/male",
       "notes": "see details at https://opengameart.org/content/lpc-character-bases; 'Thick' Male Revised Run/Climb by JaidynReiman (based on ElizaWy's LPC Revised)",
       "authors": [
@@ -377,7 +393,7 @@
       ]
     },
     {
-      "fileName": "head/heads/human/male/slash.png",
+      "fileName": "head/heads/human/male/sit.png",
       "file": "head/heads/human/male",
       "notes": "original head by Redshrike, tweaks by BenCreating, modular version by bluecarrot16",
       "authors": [
@@ -396,7 +412,7 @@
       ]
     },
     {
-      "fileName": "head/faces/male/neutral/slash.png",
+      "fileName": "head/faces/male/neutral/sit.png",
       "file": "head/faces",
       "notes": "Original by Redshrike, Expressions by ElizaWy, mapped to all frames by JaidynReiman",
       "authors": [
@@ -413,7 +429,7 @@
       ]
     },
     {
-      "fileName": "hair/curly_long/adult/slash.png",
+      "fileName": "hair/curly_long/adult/sit.png",
       "file": "hair/curly_long",
       "notes": "",
       "authors": [
@@ -427,7 +443,27 @@
       ]
     },
     {
-      "fileName": "legs/cuffed/male/slash.png",
+      "fileName": "torso/clothes/shortsleeve/tshirt/male/sit.png",
+      "file": "torso/clothes/shortsleeve/tshirt",
+      "notes": "original by ElizaWy; spellcast/thrust/shoot/hurt/male adapted from original by JaidynReiman",
+      "authors": [
+        "ElizaWy",
+        "JaidynReiman",
+        "Stephen Challener (Redshrike)",
+        "Johannes Sjölund (wulax)"
+      ],
+      "licenses": [
+        "OGA-BY 3.0"
+      ],
+      "urls": [
+        "https://opengameart.org/content/lpc-revised-character-basics",
+        "https://github.com/ElizaWy/LPC/tree/main/Characters/Clothing",
+        "https://opengameart.org/content/lpc-expanded-sit-run-jump-more",
+        "https://opengameart.org/content/lpc-expanded-simple-shirts"
+      ]
+    },
+    {
+      "fileName": "legs/cuffed/male/sit.png",
       "file": "legs/cuffed/male",
       "notes": "Original bases by Redshrike, thrust/shoot bases by Wulax, original overalls by ElizaWy, base animations adapted from v3 overalls by bluecarrot16, pants by JaidynReiman",
       "authors": [
@@ -448,7 +484,7 @@
       ]
     },
     {
-      "fileName": "feet/shoes/basic/male/slash/brown.png",
+      "fileName": "feet/shoes/basic/male/sit/brown.png",
       "file": "feet/shoes",
       "notes": "original by wulax, edited for v3 base by bluecarrot16, Jump/Sit/Emote/Run/Revised Combat by JaidynReiman",
       "authors": [
@@ -468,42 +504,21 @@
       ]
     },
     {
-      "fileName": "torso/clothes/shortsleeve/tshirt/male/slash.png",
-      "file": "torso/clothes/shortsleeve/tshirt",
-      "notes": "original by ElizaWy; spellcast/thrust/shoot/hurt/male adapted from original by JaidynReiman",
+      "fileName": "weapon/ranged/bow/normal/universal/background/sit/light.png",
+      "file": "weapon/ranged/bow/normal",
+      "notes": "original by wulax, walk animations by pvigier, split into layers and tweaked for v3 character bases by bluecarrot16. pvigier has agreed to license this sheet as OGA-BY 3.0+.",
       "authors": [
-        "ElizaWy",
-        "JaidynReiman",
-        "Stephen Challener (Redshrike)",
-        "Johannes Sjölund (wulax)"
-      ],
-      "licenses": [
-        "OGA-BY 3.0"
-      ],
-      "urls": [
-        "https://opengameart.org/content/lpc-revised-character-basics",
-        "https://github.com/ElizaWy/LPC/tree/main/Characters/Clothing",
-        "https://opengameart.org/content/lpc-expanded-sit-run-jump-more",
-        "https://opengameart.org/content/lpc-expanded-simple-shirts"
-      ]
-    },
-    {
-      "fileName": "weapon/sword/dagger/slash/dagger.png",
-      "file": "weapon/sword/dagger",
-      "notes": "",
-      "authors": [
-        "bluecarrot16",
         "Johannes Sjölund (wulax)",
-        "Matthew Krohn (makrohn)"
+        "Pierre Vigier (pvigier)"
       ],
       "licenses": [
-        "OGA-BY 3.0",
-        "CC-BY-SA 3.0",
-        "GPL 3.0"
+        "OGA-BY 3.0+",
+        "GPL 3.0",
+        "CC-BY 4.0"
       ],
       "urls": [
         "https://opengameart.org/content/lpc-medieval-fantasy-character-sprites",
-        "https://opengameart.org/content/lpc-extended-weapon-animations"
+        "https://opengameart.org/content/lpc-walk-animations-for-bows"
       ]
     }
   ]

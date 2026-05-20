@@ -4,7 +4,8 @@ import {
   PLAYER_MAX_HP, PLAYER_ATTACK, PLAYER_ATTACK_CD,
   BOW_RANGE, BOW_CD, ARROW_SPEED,
   ENEMY_MAX_HP, ENEMY_REGEN_INTERVAL, ENEMY_SPAWN_MIN_DIST,
-  REGEN_INTERVAL, ATTACK_MODE_GRACE,
+  REGEN_INTERVAL, ATTACK_MODE_GRACE, TAP_MAX_MS,
+  BOW_SHOOT_DURATION,
   WANDER_INTERVAL_MIN, WANDER_INTERVAL_MAX,
   TRUNK_TILE_IDS, TREE_TILE_SIZE,
   SPRITE_W, SPRITE_H, LPC_HURT_FRAMES,
@@ -19,6 +20,7 @@ import { createAnimations }              from './animations.js';
 import { updateEnemyAI }                 from './ai.js';
 import { updateCombat }                  from './combat.js';
 import { renderWorldGfx, updateSprites, renderUI } from './render.js';
+import { resolveDialogue } from './quests.js';
 
 class GameScene extends Phaser.Scene {
   constructor() { super('GameScene'); }
@@ -28,11 +30,17 @@ class GameScene extends Phaser.Scene {
   preload() {
     this.load.tilemapTiledJSON('map', 'map1.json');
     this.load.image('terrain_atlas', 'assets/Tiles/terrain_atlas.png');
-    this.load.spritesheet('player-base',   'assets/Player/PlayerLPC.png',         { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
-    this.load.spritesheet('player-dagger', 'assets/Player/PlayerDaggerLPC.png',   { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
-    this.load.spritesheet('player-bow',    'assets/Player/PlayerBowLPC.png',      { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
-    this.load.spritesheet('weirdo',        'assets/Enemies/LittleWeirdoLPC.png',  { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
-    this.load.spritesheet('jimmy',         'assets/NPCs/JimmyLPC.png',            { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
+    // Player per-animation sheets
+    this.load.spritesheet('player-unarmed-walk',  'assets/Player/unarmed/walk.png',   { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
+    this.load.spritesheet('player-unarmed-hurt',  'assets/Player/unarmed/hurt.png',   { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
+    this.load.spritesheet('player-dagger-walk',   'assets/Player/dagger/walk.png',    { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
+    this.load.spritesheet('player-dagger-slash',  'assets/Player/dagger/slash.png',   { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
+    this.load.spritesheet('player-bow-walk',      'assets/Player/bow/walk_128.png',   { frameWidth: 128, frameHeight: 128 });
+    this.load.spritesheet('player-bow-shoot',     'assets/Player/bow/shoot.png',      { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
+    this.load.spritesheet('weirdo-walk',   'assets/Enemies/little-weirdo/walk.png',   { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
+    this.load.spritesheet('weirdo-thrust', 'assets/Enemies/little-weirdo/thrust.png', { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
+    this.load.spritesheet('weirdo-hurt',   'assets/Enemies/little-weirdo/hurt.png',   { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
+    this.load.spritesheet('jimmy-walk', 'assets/NPCs/jimmy/walk.png', { frameWidth: SPRITE_W, frameHeight: SPRITE_H });
   }
 
   create() {
@@ -62,10 +70,13 @@ class GameScene extends Phaser.Scene {
       attackTarget: null, attackMode: false, attackModeTimer: 0,
       // Cooldowns & animation timers
       attackCd: 0, potionCd: 0, bowCd: 0,
-      swingTimer: 0, swingDamageTimer: 0, bowShootTimer: 0,
+      swingTimer: 0, swingDamageTimer: 0, bowShootTimer: 0, bowArrowPending: false,
       // Regeneration
       combatDelay: 0, regenTick: REGEN_INTERVAL,
+      // Progression
+      enemiesKilled: 0,
     };
+    this.questState = { jimmy: {} };
     this.target = { x: this.player.x, y: this.player.y };
 
     createAnimations(this);
@@ -127,10 +138,12 @@ class GameScene extends Phaser.Scene {
 
   _createPlayerSprites() {
     const { x, y } = this.player;
-    this.playerBaseSprite   = this.add.sprite(x, y, 'player-base').setOrigin(0.5, 1).setDepth(y).setVisible(false);
-    this.playerDaggerSprite = this.add.sprite(x, y, 'player-dagger').setOrigin(0.5, 1).setDepth(y);
-    this.playerBowSprite    = this.add.sprite(x, y, 'player-bow').setOrigin(0.5, 1).setDepth(y).setVisible(false);
-    this.playerDaggerSprite.play('player-dagger-idle-down');
+    this.playerBaseSprite     = this.add.sprite(x, y, 'player-unarmed-walk').setOrigin(0.5, 1).setDepth(y).setVisible(false);
+    this.playerDaggerSprite   = this.add.sprite(x, y, 'player-dagger-walk').setOrigin(0.5, 1).setDepth(y).setVisible(false);
+    this.playerBowWalkSprite  = this.add.sprite(x, y, 'player-bow-walk').setOrigin(0.5, 1).setDepth(y).setVisible(false);
+    this.playerBowShootSprite = this.add.sprite(x, y, 'player-bow-shoot').setOrigin(0.5, 1).setDepth(y).setVisible(false);
+    this.playerDaggerSprite.setVisible(true);
+    this.playerDaggerSprite.play('dagger-idle-down');
   }
 
   _createHUD() {
@@ -182,7 +195,7 @@ class GameScene extends Phaser.Scene {
   // ── Animation helpers ─────────────────────────────────────────────────────
 
   playSpriteAnim(sprite, key) {
-    if (!sprite.anims.currentAnim || sprite.anims.currentAnim.key !== key) sprite.play(key);
+    if (!sprite.anims.isPlaying || !sprite.anims.currentAnim || sprite.anims.currentAnim.key !== key) sprite.play(key);
   }
 
   updateEntityAnim(sprite, sheet, facing, moving) {
@@ -252,7 +265,7 @@ class GameScene extends Phaser.Scene {
   }
 
   initNpcs() {
-    this.addNpc(MAP_W / 2 + 350, MAP_H / 2, 'Jimmy', 'Hello!');
+    this.addNpc(MAP_W / 2 + 350, MAP_H / 2, 'Jimmy');
   }
 
   addEnemy(x, y) {
@@ -272,21 +285,21 @@ class GameScene extends Phaser.Scene {
       wanderTarget: null, wanderTimeLeft: 0,
     };
     this.enemies.push(enemy);
-    const sprite = this.add.sprite(x, y, 'weirdo').setOrigin(0.5, 1).setDepth(y);
+    const sprite = this.add.sprite(x, y, 'weirdo-walk').setOrigin(0.5, 1).setDepth(y);
     sprite.play('weirdo-idle-down');
     this.enemyTextMap.set(enemy.id, { sprite });
     return enemy;
   }
 
-  addNpc(x, y, name, dialogue) {
-    const npc = { id: this.nextId++, x, y, name, dialogue, talkTimer: 0 };
+  addNpc(x, y, name) {
+    const npc = { id: this.nextId++, x, y, name, talkTimer: 0 };
     this.npcs.push(npc);
-    const sprite = this.add.sprite(x, y, 'jimmy').setOrigin(0.5, 1).setDepth(y);
+    const sprite = this.add.sprite(x, y, 'jimmy-walk').setOrigin(0.5, 1).setDepth(y);
     sprite.play('jimmy-idle-down');
     this.npcTextMap.set(npc.id, {
       sprite,
-      name: this.add.text(x, y - RADIUS - 4, name, { fontFamily: 'monospace', fontSize: '11px', color: '#ffe090' }).setOrigin(0.5, 1).setDepth(DEPTH_WORLD_TEXT),
-      dialogue: this.add.text(x, y - RADIUS - 20, dialogue, { fontFamily: 'monospace', fontSize: '12px', color: '#222222', backgroundColor: '#f0eed7', padding: { x: 8, y: 4 } }).setOrigin(0.5, 1).setDepth(DEPTH_WORLD_TEXT).setVisible(false),
+      name:     this.add.text(x, y - RADIUS - 4,  name, { fontFamily: 'monospace', fontSize: '11px', color: '#ffe090' }).setOrigin(0.5, 1).setDepth(DEPTH_WORLD_TEXT),
+      dialogue: this.add.text(x, y - RADIUS - 20, '',   { fontFamily: 'monospace', fontSize: '12px', color: '#222222', backgroundColor: '#f0eed7', padding: { x: 8, y: 4 }, wordWrap: { width: 260 } }).setOrigin(0.5, 1).setDepth(DEPTH_WORLD_TEXT).setVisible(false),
     });
     return npc;
   }
@@ -316,7 +329,7 @@ class GameScene extends Phaser.Scene {
 
   updatePlayerMovement(dt) {
     const { player } = this;
-    if (player.attackTarget !== null) {
+    if (player.attackTarget !== null && player.weapon !== 'bow') {
       const tgt = this.enemies.find(e => e.id === player.attackTarget);
       if (!tgt) {
         player.attackTarget = null;
@@ -368,14 +381,20 @@ class GameScene extends Phaser.Scene {
   // ── XP / game over ────────────────────────────────────────────────────────
 
   awardXp() {
+    this.player.enemiesKilled++;
     this.player.xp += 20;
     while (this.player.xp >= 100) { this.player.xp -= 100; this.player.level++; this.player.damage++; }
   }
 
   onGameOver() {
     this.gameOver = true;
-    this.gameOverText.setVisible(true);
-    this.gameOverSubText.setVisible(true);
+    for (const s of [this.playerBaseSprite, this.playerDaggerSprite, this.playerBowWalkSprite, this.playerBowShootSprite]) s.setVisible(false);
+    this.playerBaseSprite.setPosition(this.player.x, this.player.y).setVisible(true);
+    this.playerBaseSprite.play('player-hurt');
+    this.playerBaseSprite.once('animationcomplete', () => {
+      this.gameOverText.setVisible(true);
+      this.gameOverSubText.setVisible(true);
+    });
   }
 
   // ── Camera ────────────────────────────────────────────────────────────────
@@ -410,7 +429,7 @@ class GameScene extends Phaser.Scene {
 
   onPointerUp(pointer) {
     if (this.gameOver) return;
-    if (!this.pMoved && this.pDownPos) this.handleTap(this.pDownPos.x, this.pDownPos.y);
+    if (!this.pMoved && this.pDownPos && (this.time.now - this.pDownTime) < TAP_MAX_MS) this.handleTap(this.pDownPos.x, this.pDownPos.y);
     this.target    = { x: this.player.x, y: this.player.y };
     this.pDownPos  = null;
     this.pMoved    = false;
@@ -426,7 +445,8 @@ class GameScene extends Phaser.Scene {
     }
     const wp = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
     this.target = { x: wp.x, y: wp.y };
-    this.player.attackTarget = null;
+    // Bow in attack mode: player repositions freely without losing the shoot target
+    if (!(this.player.weapon === 'bow' && this.player.attackMode)) this.player.attackTarget = null;
   }
 
   isPointerOverUI(px, py) {
@@ -480,8 +500,8 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
-    this.player.selectedEnemyId = null;
     this.player.selectedNpcId   = null;
+    this.player.selectedEnemyId = null;
     this.player.attackTarget    = null;
     if (this.player.attackMode) this.player.attackModeTimer = ATTACK_MODE_GRACE;
   }
@@ -494,16 +514,24 @@ class GameScene extends Phaser.Scene {
     this.player.potionCd = POTION_CD;
   }
 
-  shootArrow(enemy) {
+  // Begin the bow shoot animation. Arrow fires later via _tickBowShoot in combat.js.
+  startBowShoot(enemy) {
+    if (this.player.bowCd > 0 || this.player.bowShootTimer > 0) return;
     const dx = enemy.x - this.player.x, dy = enemy.y - this.player.y;
+    if (Math.hypot(dx, dy) > BOW_RANGE) return;
+    this.player.facing          = this.getFacing(dx, dy);
+    this.player.bowShootTimer   = BOW_SHOOT_DURATION;
+    this.player.bowArrowPending = true;
+  }
+
+  // Spawn the actual arrow projectile (called by combat.js at the release frame).
+  spawnArrow(enemy) {
+    const originY = this.player.y - SPRITE_H / 2;
+    const dx = enemy.x - this.player.x, dy = (enemy.y - SPRITE_H / 2) - originY;
     const dist = Math.hypot(dx, dy);
-    if (dist > BOW_RANGE || this.player.bowCd > 0) return;
-    this.player.bowCd         = BOW_CD;
-    this.player.bowShootTimer = 0.6;
-    enemy.aggressive = true;
-    enemy.state = 'chasing';
+    if (dist === 0) return;
     this.arrows.push({
-      x: this.player.x, y: this.player.y,
+      x: this.player.x, y: originY,
       vx: (dx / dist) * ARROW_SPEED, vy: (dy / dist) * ARROW_SPEED,
       lifetime: BOW_RANGE / ARROW_SPEED + 0.2,
     });
@@ -514,14 +542,11 @@ class GameScene extends Phaser.Scene {
     if (!enemy) enemy = this.nearestEnemyInAttackRange();
     if (!enemy) return;
     this.player.selectedEnemyId = enemy.id;
-    if (this.player.weapon === 'bow') {
-      this.shootArrow(enemy);
-    } else {
-      this.player.attackMode      = true;
-      this.player.attackModeTimer = 0;
-      this.player.attackTarget    = enemy.id;
-      this.player.facing = this.getFacing(enemy.x - this.player.x, enemy.y - this.player.y);
-    }
+    this.player.attackTarget    = enemy.id;
+    this.player.attackMode      = true;
+    this.player.attackModeTimer = 0;
+    this.player.facing = this.getFacing(enemy.x - this.player.x, enemy.y - this.player.y);
+    if (this.player.weapon === 'bow') this.startBowShoot(enemy);
   }
 
   executeTalk() {
@@ -534,6 +559,28 @@ class GameScene extends Phaser.Scene {
                       - Math.hypot(this.player.x - b.x, this.player.y - b.y))[0];
     }
     if (!npc || npc.talkTimer > 0) return;
+
+    const npcKey = npc.name.toLowerCase();
+    const allDead = this.enemies.filter(e => !e.dying).length === 0 && this.player.enemiesKilled > 0;
+    const line = resolveDialogue(npcKey, this.questState, this.player.enemiesKilled, allDead);
+
+    if (line) {
+      // Update the speech bubble text
+      const t = this.npcTextMap.get(npc.id);
+      if (t) t.dialogue.setText(line.text);
+      // Award XP if this line grants it
+      if (line.xp) {
+        this.player.xp += line.xp;
+        while (this.player.xp >= 100) { this.player.xp -= 100; this.player.level++; this.player.damage++; }
+        this.spawnDamageNumber(this.player.x, this.player.y - 20, line.xp, '#44aaff');
+      }
+      // Persist any flag this line sets
+      if (line.setFlag) {
+        if (!this.questState[npcKey]) this.questState[npcKey] = {};
+        this.questState[npcKey][line.setFlag] = true;
+      }
+    }
+
     npc.talkTimer = TALK_DURATION;
   }
 
