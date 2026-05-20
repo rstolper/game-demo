@@ -297,7 +297,7 @@ class GameScene extends Phaser.Scene {
     this.npcs.push(npc);
     const sprite = this.add.sprite(x, y, 'jimmy-walk').setOrigin(0.5, 1).setDepth(y);
     sprite.play('jimmy-idle-down');
-    const bubStyle = { fontFamily: 'monospace', fontSize: '12px', color: '#222222', backgroundColor: '#f0eed7', padding: { x: 8, y: 4 }, wordWrap: { width: 260 }, fixedWidth: 276 };
+    const bubStyle = { fontFamily: 'monospace', fontSize: '12px', color: '#ffffff', stroke: '#000000', strokeThickness: 3, wordWrap: { width: 260 } };
     this.npcTextMap.set(npc.id, {
       sprite,
       name:       this.add.text(x, y - RADIUS - 4, name, { fontFamily: 'monospace', fontSize: '11px', color: '#ffe090' }).setOrigin(0.5, 1).setDepth(DEPTH_WORLD_TEXT),
